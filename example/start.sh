@@ -5,5 +5,5 @@ echo "[sh] Started nitriding."
 
 sleep 1
 
-service.py
-echo "[sh] Ran Python script."
+service
+echo "[sh] Ran Go binary."

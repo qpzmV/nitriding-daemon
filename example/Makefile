@@ -1,5 +1,5 @@
-prog := python-enclave
-version := $(shell git describe --tag --dirty)
+prog := go-enclave
+version := $(shell git describe --tags --dirty 2>/dev/null || echo "latest")
 image_tag := $(prog):$(version)
 image_tar := $(prog)-$(version)-kaniko.tar
 image_eif := $(image_tar:%.tar=%.eif)
@@ -18,7 +18,7 @@ all: run
 .PHONY: image
 image: $(image_tar)
 
-$(image_tar): Dockerfile service.py start.sh
+$(image_tar): Dockerfile service.go start.sh
 	docker run \
 		-v $(PWD):/workspace \
 		gcr.io/kaniko-project/executor:v1.9.2 \
