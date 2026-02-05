@@ -12,7 +12,7 @@ image_eif="$1"
 # available here:
 # https://github.com/containers/gvisor-tap-vsock/tree/main/cmd/gvproxy
 echo "[ec2] Starting gvproxy."
-sudo gvproxy -listen vsock://:1024 &
+sudo gvproxy -listen vsock://:1024 -listen unix:///tmp/network.sock &
 pid="$!"
 
 # Run enclave in debug mode and attach console, to see what's going on
