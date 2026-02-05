@@ -50,9 +50,9 @@ func main() {
 		"Launch enclave application via the given command.")
 	flag.StringVar(&prometheusNamespace, "prometheus-namespace", "",
 		"Prometheus namespace for exported metrics.")
-	flag.UintVar(&extPubPort, "ext-pub-port", 443,
+	flag.UintVar(&extPubPort, "ext-pub-port", 10443,
 		"Nitriding's external, public HTTPS port.  Must match port forwarding rules on EC2 host.")
-	flag.UintVar(&extPrivPort, "ext-priv-port", 444,
+	flag.UintVar(&extPrivPort, "ext-priv-port", 10444,
 		"Nitriding's external, non-public HTTPS port.  Must match port forwarding rules on the EC2 host.")
 	flag.BoolVar(&disableKeepAlives, "disable-keep-alives", false,
 		"Disables keep-alive connections for the HTTPS service.")
