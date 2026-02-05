@@ -5,17 +5,18 @@ FROM golang:1.24.1 as builder
 WORKDIR /
 
 # Copy local source code for nitriding daemon.
-COPY ../ /nitriding-daemon
+COPY . /nitriding-daemon
 ARG TARGETARCH
 RUN ARCH=${TARGETARCH} make -C /nitriding-daemon/ nitriding
 
 # Build our service application.
 WORKDIR /app
-COPY service.go .
+COPY example/go.mod example/go.sum example/service.go ./
+RUN go mod download
 RUN CGO_ENABLED=0 go build -o service service.go
 
 # Copy start.sh and set permissions.
-COPY start.sh /bin/
+COPY example/start.sh /bin/
 RUN chown root:root /bin/start.sh
 RUN chmod 0755      /bin/start.sh
 
