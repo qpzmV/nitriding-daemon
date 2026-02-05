@@ -4,10 +4,10 @@ FROM golang:1.24.1 as builder
 
 WORKDIR /
 
-# Clone the repository and build the stand-alone nitriding executable.
-RUN git clone https://github.com/brave/nitriding-daemon.git
+# Copy local source code for nitriding daemon.
+COPY ../ /nitriding-daemon
 ARG TARGETARCH
-RUN ARCH=${TARGETARCH} make -C nitriding-daemon/ nitriding
+RUN ARCH=${TARGETARCH} make -C /nitriding-daemon/ nitriding
 
 # Build our service application.
 WORKDIR /app

@@ -19,17 +19,21 @@ all: run
 image: $(image_tar)
 
 $(image_tar): Dockerfile service.go start.sh
-	docker run \
-		-v $(PWD):/workspace \
-		gcr.io/kaniko-project/executor:v1.9.2 \
-		--reproducible \
-		--no-push \
-		--tarPath $(image_tar) \
-		--destination $(image_tag) \
+	docker build \
+		-t $(image_tag) \
 		--build-arg TARGETPLATFORM=linux/$(ARCH) \
 		--build-arg TARGETOS=linux \
 		--build-arg TARGETARCH=$(ARCH) \
-		--custom-platform linux/$(ARCH)
+		-f Dockerfile ..
+	# Save the image to a tarball for nitro-cli if needed, 
+	# but nitro-cli can also use the local docker image directly.
+	docker save $(image_tag) > $(image_tar)
+
+.PHONY: build-local
+build-local:
+	go build -o service service.go
+	make -C .. nitriding
+	cp ../nitriding .
 
 $(image_eif): $(image_tar)
 	docker load -i $<
