@@ -37,53 +37,80 @@ type CreateWalletResponse struct {
 	SignedNonce  string `json:"signed_nonce"`
 }
 
-// 1. 获取并解析证明文档，提取 Public Key
+// fetchRootPubKeyFromAttestation 从 Nitriding 获取证明文档，并解析提取 Root 公钥
 func fetchRootPubKeyFromAttestation(nonce string) (string, error) {
 	fmt.Printf("[Step 1] 正在从 Nitriding 获取证明文档...\n")
 
-	// 配置跳过 HTTPS 证书验证
+	// 1. 配置 HTTP 客户端 (跳过本地自签名证书校验)
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 	client := &http.Client{Transport: tr}
 
-	resp, err := client.Get(nitridingURL + "?nonce=" + nonce)
+	// 2. 发起请求
+	url := fmt.Sprintf("https://localhost:10443/enclave/attestation?nonce=%s", nonce)
+	resp, err := client.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("请求失败: %v", err)
+		return "", fmt.Errorf("请求 Nitriding 失败: %v (请检查 Enclave 是否运行且 10443 端口已映射)", err)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	// 去掉可能存在的换行符
 	b64Doc := strings.TrimSpace(string(body))
 
-	// Base64 解码
+	// 3. Base64 解码
 	rawDoc, err := base64.StdEncoding.DecodeString(b64Doc)
 	if err != nil {
 		return "", fmt.Errorf("Base64 解码失败: %v", err)
 	}
 
-	// CBOR 解码
+	// 4. 解析 COSE 外壳 (COSE Sign1 是一个 Array)
+	var coseSign1 []cbor.RawMessage
+	if err := cbor.Unmarshal(rawDoc, &coseSign1); err != nil {
+		return "", fmt.Errorf("COSE 外壳解析失败 (不是 Array): %v", err)
+	}
+
+	if len(coseSign1) < 4 {
+		return "", fmt.Errorf("COSE 结构异常: 预期长度 4, 实际 %d", len(coseSign1))
+	}
+
+	// 5. 提取 Payload 字节流 (Index 2 是内容主体)
+	// 在 Nitro 中，Payload 被封装为一个 Byte String，需要二次解码
+	var payloadBytes []byte
+	if err := cbor.Unmarshal(coseSign1[2], &payloadBytes); err != nil {
+		return "", fmt.Errorf("无法从 COSE 提取 Payload 字节流: %v", err)
+	}
+
+	// 6. 将 Payload 解析为真正的内容 Map
 	var doc map[string]interface{}
-	if err := cbor.Unmarshal(rawDoc, &doc); err != nil {
-		return "", fmt.Errorf("CBOR 解析失败: %v", err)
+	if err := cbor.Unmarshal(payloadBytes, &doc); err != nil {
+		return "", fmt.Errorf("Payload 内容解析失败 (Map): %v", err)
 	}
 
-	// 打印人类可读的关键信息
-	fmt.Println("--- 证明文档信息 ---")
+	// 打印人类可读的信息
+	fmt.Println("-------------------------------------------")
 	fmt.Printf("Instance ID: %v\n", doc["module_id"])
+
+	// 健壮地提取 PCR0
 	if pcrs, ok := doc["pcrs"].(map[interface{}]interface{}); ok {
-		fmt.Printf("PCR0 (镜像哈希): %x\n", pcrs[uint64(0)])
+		for k, v := range pcrs {
+			// CBOR 中的键可能是 uint64 类型
+			if fmt.Sprintf("%v", k) == "0" {
+				fmt.Printf("PCR0 (Image Hash): %x\n", v)
+			}
+		}
 	}
 
-	// 提取 Public Key
+	// 7. 提取 Public Key
 	pubKeyBytes, ok := doc["public_key"].([]byte)
 	if !ok {
-		return "", fmt.Errorf("文档中未找到 public_key 字段")
+		return "", fmt.Errorf("证明文档中未找到 public_key 字段")
 	}
 
 	pubKeyHex := hex.EncodeToString(pubKeyBytes)
-	fmt.Printf("提取到 Root PubKey: %s\n", pubKeyHex)
+	fmt.Printf("成功提取 Root PubKey: %s\n", pubKeyHex)
+	fmt.Println("-------------------------------------------")
+
 	return pubKeyHex, nil
 }
 
