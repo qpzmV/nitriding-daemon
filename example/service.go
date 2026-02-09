@@ -26,11 +26,9 @@ var (
 
 // Response structures
 type KeyResponse struct {
-	KeyShard   string `json:"key_shard"`
-	PublicKey  string `json:"public_key"`
-	Recovery   struct {
-		Shard string `json:"shard"`
-	} `json:"recovery"`
+	KeyShard      string `json:"key_shard"`
+	PublicKey     string `json:"public_key"`
+	RecoveryShard string `json:"recovery_shard"`
 }
 
 type SignatureRequest struct {
@@ -97,10 +95,10 @@ func sssKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Return user shard and recovery shard (placeholder for encryption)
 	resp := KeyResponse{
-		KeyShard:  base64.StdEncoding.EncodeToString(append([]byte{userShardID}, parts[userShardID]...)),
-		PublicKey: pubKeyHex,
+		KeyShard:      base64.StdEncoding.EncodeToString(append([]byte{userShardID}, parts[userShardID]...)),
+		PublicKey:     pubKeyHex,
+		RecoveryShard: base64.StdEncoding.EncodeToString(append([]byte{recoveryShardID}, parts[recoveryShardID]...)),
 	}
-	resp.Recovery.Shard = base64.StdEncoding.EncodeToString(append([]byte{recoveryShardID}, parts[recoveryShardID]...))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -157,7 +155,7 @@ func sssSignatureHandler(w http.ResponseWriter, r *http.Request) {
 	addressKey, _ := change.NewChildKey(0)
 
 	privKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
-	
+
 	txHashBytes, err := hex.DecodeString(req.TxHash)
 	if err != nil {
 		// Try interpreting as raw string if hex decode fails
@@ -180,7 +178,7 @@ func main() {
 	// Start the application server
 	http.HandleFunc("/app/sss/key", sssKeyHandler)
 	http.HandleFunc("/app/sss/signature", sssSignatureHandler)
-	
+
 	// Add a simple health check or root handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go Safe Wallet Service Running\n")
