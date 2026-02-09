@@ -96,49 +96,53 @@ func initializeRootKeys() error {
 	return nil
 }
 
-// Decrypt password using rootPrivKey (ECIES-like decryption)
+// Decrypt password using rootPrivKey (Standard AES-GCM ECIES-like)
 func decryptPassword(encryptedPasswordB64 string) (string, error) {
 	encryptedData, err := base64.StdEncoding.DecodeString(encryptedPasswordB64)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode encrypted password: %w", err)
+		return "", fmt.Errorf("failed to decode b64: %w", err)
 	}
 
-	// Simple ECIES: encrypted = ephemeralPubKey || ciphertext || tag
-	// For simplicity, we'll use a basic shared secret approach
-	// In production, use proper ECIES implementation
+	// 标准布局: [PubKey(33)] + [IV(12)] + [Ciphertext + Tag(min 16)]
+	const (
+		pubKeyLen = 33
+		ivLen     = 12
+		tagLen    = 16
+	)
 
-	// Here we assume the encrypted data format: [ephemeralPubKey(33)][IV(16)][ciphertext][tag(16)]
-	if len(encryptedData) < 33+16+16 {
-		return "", fmt.Errorf("encrypted data too short")
+	if len(encryptedData) < pubKeyLen+ivLen+tagLen {
+		return "", fmt.Errorf("encrypted data too short, length: %d", len(encryptedData))
 	}
 
-	ephemeralPubKeyBytes := encryptedData[:33]
+	// 1. 提取临时公钥
+	ephemeralPubKeyBytes := encryptedData[:pubKeyLen]
 	ephemeralPubKey, err := btcec.ParsePubKey(ephemeralPubKeyBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse ephemeral public key: %w", err)
 	}
 
-	// Compute shared secret
+	// 2. 计算共享密钥 (ECDH)
 	sharedSecret := btcec.GenerateSharedSecret(rootPrivKey, ephemeralPubKey)
 	key := sha256.Sum256(sharedSecret)
 
-	// Decrypt using AES-GCM
-	iv := encryptedData[33 : 33+16]
-	ciphertext := encryptedData[33+16:]
+	// 3. 提取 IV 和 密文(含Tag)
+	iv := encryptedData[pubKeyLen : pubKeyLen+ivLen]
+	ciphertext := encryptedData[pubKeyLen+ivLen:]
 
+	// 4. AES-GCM 解密
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
+		return "", err
 	}
 
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := cipher.NewGCM(block) // 现在可以使用标准的 NewGCM，因为 IV 是 12 字节
 	if err != nil {
-		return "", fmt.Errorf("failed to create GCM: %w", err)
+		return "", err
 	}
 
 	plaintext, err := gcm.Open(nil, iv, ciphertext, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to decrypt: %w", err)
+		return "", fmt.Errorf("decryption failed (wrong key or corrupted data): %w", err)
 	}
 
 	return string(plaintext), nil
