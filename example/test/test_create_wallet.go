@@ -135,26 +135,44 @@ func verifySignature(pubKeyHex, nonce, signedNonceBase64 string) error {
 	return fmt.Errorf("签名验证不匹配")
 }
 
-// 3. 符合后端标准的加密逻辑 (12字节 IV)
 func encryptPassword(rootPubKeyHex string, password string) (string, error) {
-	pubKeyBytes, _ := hex.DecodeString(rootPubKeyHex)
-	rootPubKey, _ := btcec.ParsePubKey(pubKeyBytes)
+	pubKeyBytes, err := hex.DecodeString(rootPubKeyHex)
+	if err != nil {
+		return "", err
+	}
+	rootPubKey, err := btcec.ParsePubKey(pubKeyBytes)
+	if err != nil {
+		return "", err
+	}
 
-	ephemeralPrivKey, _ := btcec.NewPrivateKey()
+	ephemeralPrivKey, err := btcec.NewPrivateKey()
+	if err != nil {
+		return "", err
+	}
 	ephemeralPubKey := ephemeralPrivKey.PubKey().SerializeCompressed()
 
 	sharedSecret := btcec.GenerateSharedSecret(ephemeralPrivKey, rootPubKey)
 	aesKey := sha256.Sum256(sharedSecret)
 
-	block, _ := aes.NewCipher(aesKey[:])
-	gcm, _ := cipher.NewGCM(block)
+	block, err := aes.NewCipher(aesKey[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
 
 	iv := make([]byte, 12)
-	io.ReadFull(rand.Reader, iv)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return "", err
+	}
 
 	ciphertext := gcm.Seal(nil, iv, []byte(password), nil)
 
-	finalData := append(ephemeralPubKey, iv...)
+	finalData := make([]byte, 0, len(ephemeralPubKey)+len(iv)+len(ciphertext))
+	finalData = append(finalData, ephemeralPubKey...)
+	finalData = append(finalData, iv...)
 	finalData = append(finalData, ciphertext...)
 
 	return base64.StdEncoding.EncodeToString(finalData), nil
