@@ -15,14 +15,57 @@ import (
 	"net/http"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 )
 
 const (
 	enclaveBaseURL = "http://127.0.0.1:8088"
 )
 
+// CreateWalletResponse 匹配后端返回的 JSON 结构
+type CreateWalletResponse struct {
+	AuthShare    string `json:"auth_share"`
+	UserShare    string `json:"user_share"`
+	DeviceShare  string `json:"device_share"`
+	RecoverShare string `json:"recover_share"`
+	PublicKey    string `json:"public_key"`
+	SignedNonce  string `json:"signed_nonce"`
+}
+
+// verifySignature 使用 RootPubKey 验证签名后的 Nonce
+func verifySignature(pubKeyHex, nonce, signedNonceBase64 string) error {
+	// 1. 解析公钥
+	pubKeyBytes, err := hex.DecodeString(pubKeyHex)
+	if err != nil {
+		return fmt.Errorf("invalid pubkey hex: %v", err)
+	}
+	pubKey, err := btcec.ParsePubKey(pubKeyBytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse pubkey: %v", err)
+	}
+
+	// 2. 解码签名 (Base64 -> DER)
+	sigBytes, err := base64.StdEncoding.DecodeString(signedNonceBase64)
+	if err != nil {
+		return fmt.Errorf("failed to decode signature b64: %v", err)
+	}
+	signature, err := ecdsa.ParseSignature(sigBytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse DER signature: %v", err)
+	}
+
+	// 3. 计算原始数据的哈希 (必须与后端签名时的 hash 逻辑一致)
+	// 后端逻辑: nonceHash := sha256.Sum256([]byte(nonce))
+	messageHash := sha256.Sum256([]byte(nonce))
+
+	// 4. 验证签名
+	if signature.Verify(messageHash[:], pubKey) {
+		return nil
+	}
+	return fmt.Errorf("signature verification failed")
+}
+
 func encryptPassword(rootPubKeyHex string, password string) (string, error) {
-	// 1. 解析 Root 公钥
 	pubKeyBytes, err := hex.DecodeString(rootPubKeyHex)
 	if err != nil {
 		return "", err
@@ -32,18 +75,15 @@ func encryptPassword(rootPubKeyHex string, password string) (string, error) {
 		return "", err
 	}
 
-	// 2. 生成临时密钥对
 	ephemeralPrivKey, err := btcec.NewPrivateKey()
 	if err != nil {
 		return "", err
 	}
-	ephemeralPubKey := ephemeralPrivKey.PubKey().SerializeCompressed() // 33字节
+	ephemeralPubKey := ephemeralPrivKey.PubKey().SerializeCompressed()
 
-	// 3. ECDH 共享密钥
 	sharedSecret := btcec.GenerateSharedSecret(ephemeralPrivKey, rootPubKey)
 	aesKey := sha256.Sum256(sharedSecret)
 
-	// 4. AES-GCM 加密 (使用标准 12 字节 IV)
 	block, err := aes.NewCipher(aesKey[:])
 	if err != nil {
 		return "", err
@@ -53,15 +93,13 @@ func encryptPassword(rootPubKeyHex string, password string) (string, error) {
 		return "", err
 	}
 
-	iv := make([]byte, 12) // 业界习俗：GCM 使用 12 字节 IV
+	iv := make([]byte, 12)
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
 		return "", err
 	}
 
-	// Seal 会返回 [ciphertext][tag]
 	ciphertext := gcm.Seal(nil, iv, []byte(password), nil)
 
-	// 5. 拼接: [PubKey(33)][IV(12)][Ciphertext+Tag]
 	finalData := make([]byte, 0, len(ephemeralPubKey)+len(iv)+len(ciphertext))
 	finalData = append(finalData, ephemeralPubKey...)
 	finalData = append(finalData, iv...)
@@ -75,6 +113,7 @@ func main() {
 	fmt.Print("请输入 Enclave Root PubKey Hex: ")
 	fmt.Scanln(&rootPubKeyHex)
 
+	nonce := "nonce_abc" // 客户端发送的 Nonce
 	encryptedPass, err := encryptPassword(rootPubKeyHex, "my-secure-pin-123456")
 	if err != nil {
 		log.Fatalf("加密失败: %v", err)
@@ -83,7 +122,7 @@ func main() {
 	requestBody := map[string]string{
 		"user_id":            "user_888",
 		"login_token":        "token_123",
-		"nonce":              "nonce_abc",
+		"nonce":              nonce,
 		"encrypted_password": encryptedPass,
 	}
 
@@ -95,5 +134,24 @@ func main() {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("状态码: %d\n响应内容: %s\n", resp.StatusCode, string(body))
+	if resp.StatusCode != 200 {
+		log.Fatalf("服务器返回错误: %d - %s", resp.StatusCode, string(body))
+	}
+
+	// 解析响应内容
+	var walletResp CreateWalletResponse
+	if err := json.Unmarshal(body, &walletResp); err != nil {
+		log.Fatalf("解析响应失败: %v", err)
+	}
+
+	fmt.Printf("\n[Step 1] 收到响应，准备验证签名...\n")
+
+	// 执行验签逻辑
+	err = verifySignature(rootPubKeyHex, nonce, walletResp.SignedNonce)
+	if err != nil {
+		fmt.Printf("❌ 签名验证失败: %v\n", err)
+	} else {
+		fmt.Println("✅ 签名验证成功！响应内容确由 Enclave 签发且 Nonce 匹配。")
+		fmt.Printf("新钱包公钥: %s\n", walletResp.PublicKey)
+	}
 }
