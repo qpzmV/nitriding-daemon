@@ -257,12 +257,12 @@ func NewEnclave(cfg *Config) (*Enclave, error) {
 		MaxIdleConnsPerHost: 500,
 	}
 
-	if cfg.Debug {
-		e.attester = &dummyAttester{}
-		e.extPubSrv.Handler.(*chi.Mux).Use(middleware.Logger)
-		e.extPrivSrv.Handler.(*chi.Mux).Use(middleware.Logger)
-		e.intSrv.Handler.(*chi.Mux).Use(middleware.Logger)
-	}
+	// if cfg.Debug {
+	// 	e.attester = &dummyAttester{}
+	// 	e.extPubSrv.Handler.(*chi.Mux).Use(middleware.Logger)
+	// 	e.extPrivSrv.Handler.(*chi.Mux).Use(middleware.Logger)
+	// 	e.intSrv.Handler.(*chi.Mux).Use(middleware.Logger)
+	// }
 	if cfg.PrometheusPort > 0 {
 		e.extPubSrv.Handler.(*chi.Mux).Use(e.metrics.middleware)
 		e.extPrivSrv.Handler.(*chi.Mux).Use(e.metrics.middleware)
