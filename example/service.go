@@ -96,6 +96,23 @@ func initializeRootKeys() error {
 	return nil
 }
 
+// getRootPubKeyHandler 返回当前 Enclave 的 Root 公钥 (Hex 格式)
+func getRootPubKeyHandler(w http.ResponseWriter, r *http.Request) {
+	if rootPubKey == nil {
+		http.Error(w, "Root key not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	pubKeyBytes := rootPubKey.SerializeCompressed()
+	pubKeyHex := hex.EncodeToString(pubKeyBytes)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"public_key": pubKeyHex,
+		"status":     "initialized",
+	})
+}
+
 // Decrypt password using rootPrivKey (Standard AES-GCM ECIES-like)
 func decryptPassword(encryptedPasswordB64 string) (string, error) {
 	encryptedData, err := base64.StdEncoding.DecodeString(encryptedPasswordB64)
@@ -438,6 +455,7 @@ func main() {
 	// Register HTTP handlers
 	http.HandleFunc("/app/sss/key", createWalletHandler)
 	http.HandleFunc("/app/sss/signature", sssSignatureHandler)
+	http.HandleFunc("/app/tee_pubkey", getRootPubKeyHandler)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go Safe Wallet Service Running\n")
