@@ -491,7 +491,7 @@ func main() {
 	}
 
 	// Register HTTP handlers
-	http.HandleFunc("/tee_wallet/creat_key_share", createWalletHandler)
+	http.HandleFunc("/tee_wallet/create_key_share", createWalletHandler)
 	http.HandleFunc("/tee_wallet/sign_transaction", signTransactionHandler)
 	http.HandleFunc("/tee_wallet/tee_pubkey", getRootPubKeyHandler)
 

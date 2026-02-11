@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	enclaveAppURL = "http://54.234.234.166:8088"
-	nitridingURL  = "https://54.234.234.166:10443/enclave/attestation"
+	enclaveAppURL = "http://100.31.109.41:8088"
+	nitridingURL  = "https://100.31.109.41:10443/enclave/attestation"
 	testNonce     = "abc1111111111111111111111111111111111111"
 	testUserPIN   = "my-secure-pin-123456"
 )
@@ -233,7 +233,7 @@ func main() {
 	}
 	jsonData, _ := json.Marshal(requestBody)
 
-	resp, err := http.Post(enclaveAppURL+"/tee_wallet/creat_key_share", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(enclaveAppURL+"/tee_wallet/create_key_share", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Fatalf("❌ 业务请求失败: %v", err)
 	}
