@@ -45,19 +45,20 @@ type CreateWalletRequest struct {
 }
 
 type SignatureRequest struct {
-	KeyShard string `json:"key_shard_b64"`
-	PubKey   string `json:"pub_key"`
-	TxHash   string `json:"tx_hash"`
+	EncryptedPassword string `json:"encrypted_password"` // encrypted with rootPubKey
+	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
+	PubKey            string `json:"pub_key"`
+	TxHash            string `json:"tx_hash"`
 }
 
 // Response structures
 type CreateWalletResponse struct {
-	AuthShare    string `json:"auth_share"`    // encrypted with userPassword + rootPrivKey
-	UserShare    string `json:"user_share"`    // encrypted with userPassword + rootPrivKey
-	DeviceShare  string `json:"device_share"`  // encrypted with userPassword
-	RecoverShare string `json:"recover_share"` // encrypted with userPassword
-	PublicKey    string `json:"public_key"`
-	SignedNonce  string `json:"signed_nonce"` // nonce signed with rootPrivKey
+	AuthShare       string `json:"auth_share"`    // encrypted with userPassword + rootPrivKey
+	UserShare       string `json:"user_share"`    // encrypted with userPassword + rootPrivKey
+	DeviceShare     string `json:"device_share"`  // encrypted with userPassword
+	RecoverShare    string `json:"recover_share"` // encrypted with userPassword
+	WalletPublicKey string `json:"wallet_public_key"`
+	SignedNonce     string `json:"signed_nonce"` // nonce signed with rootPrivKey
 }
 
 type SignatureResponse struct {
@@ -366,12 +367,12 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 8. Return response
 	resp := CreateWalletResponse{
-		AuthShare:    authShare,
-		UserShare:    userShare,
-		DeviceShare:  deviceShare,
-		RecoverShare: recoverShare,
-		PublicKey:    pubKeyHex,
-		SignedNonce:  signedNonce,
+		AuthShare:       authShare,
+		UserShare:       userShare,
+		DeviceShare:     deviceShare,
+		RecoverShare:    recoverShare,
+		WalletPublicKey: pubKeyHex,
+		SignedNonce:     signedNonce,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -379,8 +380,8 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[go] Created wallet for user %s: %s\n", req.UserID, pubKeyHex)
 }
 
-// sssSignatureHandler handles signing using combined shards
-func sssSignatureHandler(w http.ResponseWriter, r *http.Request) {
+// signTransactionHandler handles signing using combined shards
+func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -392,7 +393,51 @@ func sssSignatureHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Get enclave shard from memory
+	// 1. Decrypt user password using rootPrivKey
+	userPassword, err := decryptPassword(req.EncryptedPassword)
+	if err != nil {
+		log.Printf("[go] Failed to decrypt password: %v\n", err)
+		http.Error(w, "Failed to decrypt password", http.StatusBadRequest)
+		return
+	}
+
+	// 2. Decrypt device_share using user password
+	deviceShareEncrypted, err := base64.StdEncoding.DecodeString(req.DeviceShare)
+	if err != nil {
+		http.Error(w, "Invalid device share format", http.StatusBadRequest)
+		return
+	}
+
+	// Derive key from password
+	passwordKey := sha256.Sum256([]byte(userPassword))
+	block, err := aes.NewCipher(passwordKey[:])
+	if err != nil {
+		http.Error(w, "Failed to create cipher", http.StatusInternalServerError)
+		return
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		http.Error(w, "Failed to create GCM", http.StatusInternalServerError)
+		return
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(deviceShareEncrypted) < nonceSize {
+		http.Error(w, "Device share too short", http.StatusBadRequest)
+		return
+	}
+
+	nonce := deviceShareEncrypted[:nonceSize]
+	ciphertext := deviceShareEncrypted[nonceSize:]
+	userPart, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		log.Printf("[go] Failed to decrypt device share: %v\n", err)
+		http.Error(w, "Failed to decrypt device share", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Get enclave shard from memory
 	storeMutex.RLock()
 	enclavePart, ok := shardsStore[req.PubKey]
 	storeMutex.RUnlock()
@@ -401,14 +446,7 @@ func sssSignatureHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Decode user shard
-	userPart, err := base64.StdEncoding.DecodeString(req.KeyShard)
-	if err != nil {
-		http.Error(w, "Invalid user shard", http.StatusBadRequest)
-		return
-	}
-
-	// 3. Combine shards
+	// 4. Combine shards using Shamir
 	selection := map[byte][]byte{
 		enclavePart[0]: enclavePart[1:],
 		userPart[0]:    userPart[1:],
@@ -419,7 +457,7 @@ func sssSignatureHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Derive child key (BIP44)
+	// 5. Derive child key (BIP44)
 	master, _ := bip32.NewMasterKey(recoveredSecret)
 	purpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
 	coin, _ := purpose.NewChildKey(bip32.FirstHardenedChild + 60)
@@ -434,7 +472,7 @@ func sssSignatureHandler(w http.ResponseWriter, r *http.Request) {
 		txHashBytes = []byte(req.TxHash)
 	}
 
-	// Sign using ECDSA
+	// 6. Sign using ECDSA
 	sig := ecdsa.Sign(privKey, txHashBytes)
 
 	resp := SignatureResponse{
@@ -453,9 +491,9 @@ func main() {
 	}
 
 	// Register HTTP handlers
-	http.HandleFunc("/app/sss/key", createWalletHandler)
-	http.HandleFunc("/app/sss/signature", sssSignatureHandler)
-	http.HandleFunc("/app/tee_pubkey", getRootPubKeyHandler)
+	http.HandleFunc("/tee_wallet/creat_key_share", createWalletHandler)
+	http.HandleFunc("/tee_wallet/sign_transaction", signTransactionHandler)
+	http.HandleFunc("/tee_wallet/tee_pubkey", getRootPubKeyHandler)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go Safe Wallet Service Running\n")
