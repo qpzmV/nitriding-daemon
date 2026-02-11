@@ -24,7 +24,7 @@ import (
 const (
 	enclaveAppURL = "http://100.31.109.41:8088"
 	nitridingURL  = "https://100.31.109.41:10443/enclave/attestation"
-	testNonce     = "sign_test_nonce_123456789"
+	testNonce     = "1234567890abcdef1234567890abcdef12345678" // 40-digit hex string
 	testUserPIN   = "my-secure-pin-123456"
 )
 

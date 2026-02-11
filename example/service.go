@@ -494,16 +494,36 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[go] Signed tx for wallet: %s\n", req.PubKey)
 }
 
+// corsMiddleware 处理跨域请求
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// 允许的源：开发环境可以设为 *，生产环境建议设为具体的域名
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// 允许的请求方法
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+		// 允许的请求头
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+
+		// 处理浏览器发出的“预检”请求 (Preflight)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 func main() {
 	// Initialize root keys
 	if err := initializeRootKeys(); err != nil {
 		log.Fatalf("Failed to initialize root keys: %v", err)
 	}
 
-	// Register HTTP handlers
-	http.HandleFunc("/tee_wallet/create_key_share", createWalletHandler)
-	http.HandleFunc("/tee_wallet/sign_transaction", signTransactionHandler)
-	http.HandleFunc("/tee_wallet/tee_pubkey", getRootPubKeyHandler)
+	// Register HTTP handlers with CORS middleware
+	http.HandleFunc("/tee_wallet/create_key_share", corsMiddleware(createWalletHandler))
+	http.HandleFunc("/tee_wallet/sign_transaction", corsMiddleware(signTransactionHandler))
+	http.HandleFunc("/tee_wallet/tee_pubkey", corsMiddleware(getRootPubKeyHandler))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go Safe Wallet Service Running\n")
