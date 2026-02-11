@@ -349,11 +349,21 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 5. Generate public key for wallet address
-	privKey, _ := btcec.PrivKeyFromBytes(privateKeyBytes)
-	pubKeyHex := hex.EncodeToString(privKey.PubKey().SerializeCompressed())
+	// 5. Generate public key for wallet address (BIP44)
+	master, _ := bip32.NewMasterKey(privateKeyBytes)
+	purpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
+	coin, _ := purpose.NewChildKey(bip32.FirstHardenedChild + 60)
+	account, _ := coin.NewChildKey(bip32.FirstHardenedChild + 0)
+	change, _ := account.NewChildKey(0)
+	addressKey, _ := change.NewChildKey(0) // m/44'/60'/0'/0/0
 
-	// 6. Store shard1 (auth_share) in enclave memory
+	// Use derived key for public key response and storage
+	derivedPrivKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
+	pubKeyHex := hex.EncodeToString(derivedPrivKey.PubKey().SerializeCompressed())
+
+	log.Printf("[go] Derived BIP44 public key: %s\n", pubKeyHex)
+
+	// 6. Store shard1 (auth_share) in enclave memory using DERIVED public key as index
 	storeMutex.Lock()
 	shardsStore[pubKeyHex] = shard1
 	storeMutex.Unlock()
