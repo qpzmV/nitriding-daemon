@@ -204,6 +204,7 @@ func createWallet(verifiedPubKey string) (*CreateWalletResponse, error) {
 		"login_token":        "token_sign_test",
 		"nonce":              testNonce,
 		"encrypted_password": encryptedPass,
+		"tee_pk":             verifiedPubKey,
 	}
 	jsonData, _ := json.Marshal(requestBody)
 

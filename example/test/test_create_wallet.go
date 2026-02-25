@@ -256,6 +256,7 @@ func main() {
 		"login_token":        "token_123",
 		"nonce":              testNonce,
 		"encrypted_password": encryptedPass,
+		"tee_pk":             verifiedPubKey,
 	}
 	jsonData, _ := json.Marshal(requestBody)
 

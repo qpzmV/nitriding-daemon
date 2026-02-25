@@ -46,6 +46,7 @@ type CreateWalletRequest struct {
 	LoginToken        string `json:"login_token"`
 	Nonce             string `json:"nonce"`
 	EncryptedPassword string `json:"encrypted_password"` // encrypted with rootPubKey
+	RootPubKey        string `json:"tee_pk"`
 }
 
 type SignatureRequest struct {
@@ -356,6 +357,14 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 	var req CreateWalletRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Check if rootPubKey matches
+	enclaveRootPubKeyHex := hex.EncodeToString(rootPubKey.SerializeCompressed())
+	if req.RootPubKey != enclaveRootPubKeyHex {
+		log.Printf("[go] RootPubKey mismatch: expected %s, got %s\n", enclaveRootPubKeyHex, req.RootPubKey)
+		http.Error(w, "RootPubKey mismatch", http.StatusBadRequest)
 		return
 	}
 
