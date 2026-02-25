@@ -19,6 +19,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/fxamacker/cbor/v2"
+	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -41,7 +42,7 @@ type SignatureRequest struct {
 	EncryptedPassword string `json:"encrypted_password"` // encrypted with rootPubKey
 	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
 	PubKey            string `json:"pub_key"`
-	TxHash            string `json:"tx_hash"`
+	RawTx             string `json:"raw_tx"`
 }
 
 type SignatureResponse struct {
@@ -226,16 +227,16 @@ func createWallet(verifiedPubKey string) (*CreateWalletResponse, error) {
 }
 
 // 5. 签名交易
-func signTransaction(walletPubKey string, encryptedPassword string, deviceShare string, txHash string) (*SignatureResponse, error) {
+func signTransaction(walletPubKey string, encryptedPassword string, deviceShare string, rawTx string) (*SignatureResponse, error) {
 	fmt.Printf("\n[Step 3] 正在请求 Enclave 签名交易...\n")
 	fmt.Printf("  - 钱包公钥: %s\n", walletPubKey)
-	fmt.Printf("  - 交易哈希: %s\n", txHash)
+	fmt.Printf("  - 原始交易: %s\n", rawTx)
 
 	signReq := SignatureRequest{
 		EncryptedPassword: encryptedPassword,
 		DeviceShare:       deviceShare,
 		PubKey:            walletPubKey,
-		TxHash:            txHash,
+		RawTx:             rawTx,
 	}
 	jsonData, _ := json.Marshal(signReq)
 
@@ -260,7 +261,7 @@ func signTransaction(walletPubKey string, encryptedPassword string, deviceShare 
 }
 
 // 6. 验证签名 (使用 BIP44 派生的公钥)
-func verifyTransactionSignature(signature string, txHash string, walletPubKey string) error {
+func verifyTransactionSignature(signature string, rawTx string, walletPubKey string) error {
 	fmt.Printf("\n[Step 4] 正在验证签名...\n")
 
 	sigBytes, err := base64.StdEncoding.DecodeString(signature)
@@ -273,8 +274,15 @@ func verifyTransactionSignature(signature string, txHash string, walletPubKey st
 		return fmt.Errorf("签名解析失败: %v", err)
 	}
 
-	// 注意：这里我们使用钱包公钥来验证
-	// 在实际场景中，应该使用 BIP44 派生后的公钥
+	// 计算 RawTx 的 Keccak-256 哈希
+	txBytes, err := hex.DecodeString(rawTx)
+	if err != nil {
+		txBytes = []byte(rawTx)
+	}
+	hasher := sha3.NewLegacyKeccak256()
+	hasher.Write(txBytes)
+	txHashHash := hasher.Sum(nil)
+
 	pubKeyBytes, err := hex.DecodeString(walletPubKey)
 	if err != nil {
 		return fmt.Errorf("公钥解码失败: %v", err)
@@ -285,13 +293,7 @@ func verifyTransactionSignature(signature string, txHash string, walletPubKey st
 		return fmt.Errorf("公钥解析失败: %v", err)
 	}
 
-	txHashBytes, err := hex.DecodeString(txHash)
-	if err != nil {
-		// 如果不是 hex，直接使用原始字符串
-		txHashBytes = []byte(txHash)
-	}
-
-	if sig.Verify(txHashBytes, pubKey) {
+	if sig.Verify(txHashHash, pubKey) {
 		fmt.Println("✅ 签名验证成功！")
 		return nil
 	}
@@ -328,14 +330,14 @@ func main() {
 	fmt.Printf("✅ 密码加密成功\n")
 
 	// D. 签名交易 (直接使用加密的 device_share 和加密的密码)
-	testTxHash := "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-	sigResp, err := signTransaction(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, testTxHash)
+	testRawTx := "02f870820305843b9aca00830186a09471c7656ec7ab88b098defb751b7401b5f6d8976f880de0b6b3a764000080c0" // 示例以太坊交易字节流
+	sigResp, err := signTransaction(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, testRawTx)
 	if err != nil {
 		log.Fatalf("❌ 签名交易失败: %v", err)
 	}
 
 	// E. 验证签名
-	err = verifyTransactionSignature(sigResp.Signature, testTxHash, walletResp.WalletPublicKey)
+	err = verifyTransactionSignature(sigResp.Signature, testRawTx, walletResp.WalletPublicKey)
 	if err != nil {
 		log.Printf("⚠️  签名验证: %v", err)
 		log.Printf("注意：由于使用了 BIP44 派生，验证可能需要使用派生后的公钥")
@@ -343,6 +345,6 @@ func main() {
 
 	fmt.Println("\n=== 测试完成 ===")
 	fmt.Printf("钱包公钥: %s\n", walletResp.WalletPublicKey)
-	fmt.Printf("交易哈希: %s\n", testTxHash)
+	fmt.Printf("原始交易: %s\n", testRawTx)
 	fmt.Printf("签名值: %s\n", sigResp.Signature)
 }

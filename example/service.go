@@ -20,6 +20,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/corvus-ch/shamir"
 	"github.com/tyler-smith/go-bip32"
+	"golang.org/x/crypto/sha3"
 )
 
 const nitridingURL = "http://127.0.0.1:8080"
@@ -48,7 +49,7 @@ type SignatureRequest struct {
 	EncryptedPassword string `json:"encrypted_password"` // encrypted with rootPubKey
 	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
 	PubKey            string `json:"pub_key"`
-	TxHash            string `json:"tx_hash"`
+	RawTx             string `json:"raw_tx"` // hex encoded raw transaction bytes
 }
 
 // Response structures
@@ -477,13 +478,21 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 
 	privKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
 
-	txHashBytes, err := hex.DecodeString(req.TxHash)
+	// 5. Decode RawTx and compute Keccak-256 Hash
+	txBytes, err := hex.DecodeString(req.RawTx)
 	if err != nil {
-		txHashBytes = []byte(req.TxHash)
+		log.Printf("[go] Failed to decode RawTx hex: %v\n", err)
+		http.Error(w, "Invalid raw_tx hex", http.StatusBadRequest)
+		return
 	}
 
+	// 以太坊标准：对 RLP 编码后的原始交易进行 Keccak256 哈希
+	hasher := sha3.NewLegacyKeccak256()
+	hasher.Write(txBytes)
+	txHashHash := hasher.Sum(nil)
+
 	// 6. Sign using ECDSA
-	sig := ecdsa.Sign(privKey, txHashBytes)
+	sig := ecdsa.Sign(privKey, txHashHash)
 
 	resp := SignatureResponse{
 		Signature: base64.StdEncoding.EncodeToString(sig.Serialize()),

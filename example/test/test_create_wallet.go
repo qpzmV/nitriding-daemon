@@ -30,12 +30,12 @@ const (
 )
 
 type CreateWalletResponse struct {
-	AuthShare    string `json:"auth_share"`
-	UserShare    string `json:"user_share"`
-	DeviceShare  string `json:"device_share"`
-	RecoverShare string `json:"recover_share"`
-	PublicKey    string `json:"public_key"`
-	SignedNonce  string `json:"signed_nonce"`
+	AuthShare       string `json:"auth_share"`
+	UserShare       string `json:"user_share"`
+	DeviceShare     string `json:"device_share"`
+	RecoverShare    string `json:"recover_share"`
+	WalletPublicKey string `json:"wallet_public_key"`
+	SignedNonce     string `json:"signed_nonce"`
 }
 
 // 1. 从业务接口获取公钥原文 (TEE_PubKey)
@@ -282,10 +282,10 @@ func main() {
 		fmt.Printf("❌ 验签失败: %v\n", err)
 	} else {
 		fmt.Println("✅ 验签成功！该响应确实来自受信任的 Enclave。")
-		fmt.Printf("钱包公钥: %s\n", walletResp.PublicKey)
+		fmt.Printf("钱包公钥: %s\n", walletResp.WalletPublicKey)
 
 		// 生成并显示 ETH 地址
-		ethAddr, err := PublicKeyToEthAddress(walletResp.PublicKey)
+		ethAddr, err := PublicKeyToEthAddress(walletResp.WalletPublicKey)
 		if err != nil {
 			fmt.Printf("❌ 转换 ETH 地址失败: %v\n", err)
 		} else {
