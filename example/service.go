@@ -63,7 +63,8 @@ type CreateWalletResponse struct {
 }
 
 type SignatureResponse struct {
-	Signature string `json:"signature"`
+	Signature       string `json:"signature"`
+	WalletPublicKey string `json:"wallet_public_key"`
 }
 
 // Initialize root keys and register with nitriding
@@ -403,6 +404,7 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
+	log.Printf(">> [go] Signed tx for wallet: %s\n", req.PubKey)
 
 	// 1. Decrypt user password using rootPrivKey
 	userPassword, err := decryptPassword(req.EncryptedPassword)
@@ -494,13 +496,17 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	// 6. Sign using ECDSA
 	sig := ecdsa.Sign(privKey, txHashHash)
 
+	// Derive public key from the same private key used for signing
+	pubKeyHex := hex.EncodeToString(privKey.PubKey().SerializeCompressed())
+
 	resp := SignatureResponse{
-		Signature: base64.StdEncoding.EncodeToString(sig.Serialize()),
+		Signature:       base64.StdEncoding.EncodeToString(sig.Serialize()),
+		WalletPublicKey: pubKeyHex,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-	log.Printf("[go] Signed tx for wallet: %s\n", req.PubKey)
+	log.Printf("<< [go] Signed tx for wallet: %s\n", pubKeyHex)
 }
 
 // corsMiddleware 处理跨域请求

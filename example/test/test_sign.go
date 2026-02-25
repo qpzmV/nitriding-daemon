@@ -46,7 +46,8 @@ type SignatureRequest struct {
 }
 
 type SignatureResponse struct {
-	Signature string `json:"signature"`
+	Signature       string `json:"signature"`
+	WalletPublicKey string `json:"wallet_public_key"`
 }
 
 // 1. 从业务接口获取公钥原文 (TEE_PubKey)
@@ -330,7 +331,8 @@ func main() {
 	fmt.Printf("✅ 密码加密成功\n")
 
 	// D. 签名交易 (直接使用加密的 device_share 和加密的密码)
-	testRawTx := "02f870820305843b9aca00830186a09471c7656ec7ab88b098defb751b7401b5f6d8976f880de0b6b3a764000080c0" // 示例以太坊交易字节流
+	// 使用以太坊 Sepolia 测试网的真实 EIP-1559 交易示例 (链 ID: 11155111)
+	testRawTx := "02f87183aa284780843b9aca0084773594008252089471c7656ec7ab88b098defb751b7401b5f6d8976f880de0b6b3a764000080c0"
 	sigResp, err := signTransaction(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, testRawTx)
 	if err != nil {
 		log.Fatalf("❌ 签名交易失败: %v", err)
@@ -344,7 +346,8 @@ func main() {
 	}
 
 	fmt.Println("\n=== 测试完成 ===")
-	fmt.Printf("钱包公钥: %s\n", walletResp.WalletPublicKey)
+	fmt.Printf("创建钱包返回公钥: %s\n", walletResp.WalletPublicKey)
+	fmt.Printf("签名返回钱包公钥: %s\n", sigResp.WalletPublicKey)
 	fmt.Printf("原始交易: %s\n", testRawTx)
 	fmt.Printf("签名值: %s\n", sigResp.Signature)
 }
