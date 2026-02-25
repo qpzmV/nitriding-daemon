@@ -34,8 +34,8 @@ const (
 	realTxNitridingURL  = "https://localhost:10443/enclave/attestation"
 	realTxNonce         = "1234567890abcdef1234567890abcdef12345678" // 40-digit hex string
 	realTxUserPIN       = "my-secure-pin-123456"
-	realTxRpcURL        = "https://rpc.ankr.com/eth_sepolia" // Sepolia Testnet RPC
-	realTxChainID       = 11155111                           // Sepolia Chain ID
+	realTxRpcURL        = "https://ethereum-sepolia-rpc.publicnode.com" // Sepolia Testnet RPC
+	realTxChainID       = 11155111                                      // Sepolia Chain ID
 )
 
 type RealTxCreateWalletResponse struct {
