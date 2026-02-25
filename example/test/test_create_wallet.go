@@ -19,11 +19,12 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/fxamacker/cbor/v2"
+	"golang.org/x/crypto/sha3"
 )
 
 const (
-	enclaveAppURL = "http://100.31.109.41:8088"
-	nitridingURL  = "https://100.31.109.41:10443/enclave/attestation"
+	enclaveAppURL = "http://localhost:8088"
+	nitridingURL  = "https://localhost:10443/enclave/attestation"
 	testNonce     = "abc1111111111111111111111111111111111111"
 	testUserPIN   = "my-secure-pin-123456"
 )
@@ -202,6 +203,31 @@ func verifySignature(pubKeyHex, nonce, signedNonceBase64 string) error {
 	return fmt.Errorf("签名验证不匹配")
 }
 
+// 5. PublicKeyToEthAddress 将压缩公钥转换为以太坊地址
+func PublicKeyToEthAddress(pubKeyHex string) (string, error) {
+	pubKeyBytes, err := hex.DecodeString(pubKeyHex)
+	if err != nil {
+		return "", err
+	}
+
+	pubKey, err := btcec.ParsePubKey(pubKeyBytes)
+	if err != nil {
+		return "", err
+	}
+
+	// 以太坊使用非压缩公钥 (65字节) 的后64字节进行哈希
+	uncompressedPubKey := pubKey.SerializeUncompressed()
+
+	// 计算 Keccak-256 哈希
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write(uncompressedPubKey[1:]) // 跳过 0x04 控制字节
+	pubKeyHash := hash.Sum(nil)
+
+	// 取最后 20 字节
+	address := "0x" + hex.EncodeToString(pubKeyHash[12:])
+	return address, nil
+}
+
 func main() {
 	log.Println("=== Enclave 钱包创建测试脚本启动 ===")
 
@@ -256,7 +282,16 @@ func main() {
 		fmt.Printf("❌ 验签失败: %v\n", err)
 	} else {
 		fmt.Println("✅ 验签成功！该响应确实来自受信任的 Enclave。")
-		fmt.Printf("钱包地址(公钥): %s\n", walletResp.PublicKey)
+		fmt.Printf("钱包公钥: %s\n", walletResp.PublicKey)
+
+		// 生成并显示 ETH 地址
+		ethAddr, err := PublicKeyToEthAddress(walletResp.PublicKey)
+		if err != nil {
+			fmt.Printf("❌ 转换 ETH 地址失败: %v\n", err)
+		} else {
+			fmt.Printf("以太坊地址: %s\n", ethAddr)
+		}
+
 		fmt.Printf("Auth Share (B64前缀): %s...\n", walletResp.AuthShare[:20])
 	}
 }
