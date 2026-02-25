@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	enclaveAppURL = "http://localhost:8088"
-	nitridingURL  = "https://localhost:10443/enclave/attestation"
+	enclaveAppURL = "http://35.175.5.84:8088"
+	nitridingURL  = "https://35.175.5.84:10443/enclave/attestation"
 	testNonce     = "abc1111111111111111111111111111111111111"
 	testUserPIN   = "my-secure-pin-123456"
 )

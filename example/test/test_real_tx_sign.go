@@ -208,7 +208,7 @@ func createRealTxWallet(verifiedPubKey string) (*RealTxCreateWalletResponse, err
 	}
 	jsonData, _ := json.Marshal(requestBody)
 
-	resp, err := http.Post(realTxEnclaveAppURL+"/tee_wallet/create_key_share", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(realTxEnclaveAppURL+"/tee_wallet/test_pubkey", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("业务请求失败: %v", err)
 	}

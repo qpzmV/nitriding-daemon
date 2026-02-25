@@ -116,6 +116,77 @@ func getRootPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// testWalletPubKeyHandler 用于测试，固定初始化并返回同一个 WalletPublicKey 和配套分片
+func testWalletPubKeyHandler(w http.ResponseWriter, r *http.Request) {
+	var req CreateWalletRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// 1. 固定一个 32 字节的种子私钥
+	testSeedHex := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	testSeed, _ := hex.DecodeString(testSeedHex)
+
+	// 解密用户密码，为了兼容现有逻辑，我们这里解密 req.EncryptedPassword
+	userPassword, err := decryptPassword(req.EncryptedPassword)
+	if err != nil {
+		http.Error(w, "Failed to decrypt password", http.StatusBadRequest)
+		return
+	}
+
+	// 2. 生成 BIP44 公钥
+	master, _ := bip32.NewMasterKey(testSeed)
+	purpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
+	coin, _ := purpose.NewChildKey(bip32.FirstHardenedChild + 60)
+	account, _ := coin.NewChildKey(bip32.FirstHardenedChild + 0)
+	change, _ := account.NewChildKey(0)
+	addressKey, _ := change.NewChildKey(0)
+	derivedPrivKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
+	pubKeyHex := hex.EncodeToString(derivedPrivKey.PubKey().SerializeCompressed())
+
+	// 3. 将种子私钥分成 3 个分片，阈值为 2
+	parts, err := shamir.Split(testSeed, 3, 2)
+	if err != nil {
+		http.Error(w, "Failed to split secret", http.StatusInternalServerError)
+		return
+	}
+
+	var shardIDs []byte
+	for k := range parts {
+		shardIDs = append(shardIDs, k)
+	}
+	shard1 := append([]byte{shardIDs[0]}, parts[shardIDs[0]]...)
+	shard2 := append([]byte{shardIDs[1]}, parts[shardIDs[1]]...)
+	shard3 := append([]byte{shardIDs[2]}, parts[shardIDs[2]]...)
+
+	// 4. 将分片 1 存入 Enclave 内存 (模拟存储)
+	storeMutex.Lock()
+	shardsStore[pubKeyHex] = shard1
+	storeMutex.Unlock()
+
+	// 5. 按照 createWalletHandler 的逻辑加密所有分片返回
+	authShare, _ := encryptWithPasswordAndRoot(shard1, userPassword)
+	userShare, _ := encryptWithPasswordAndRoot(shard2, userPassword)
+	deviceShare, _ := encryptWithPassword(shard2, userPassword)
+	recoverShare, _ := encryptWithPassword(shard3, userPassword)
+
+	// 6. 签名 nonce
+	signedNonce, _ := signNonce(req.Nonce)
+
+	resp := CreateWalletResponse{
+		AuthShare:       authShare,
+		UserShare:       userShare,
+		DeviceShare:     deviceShare,
+		RecoverShare:    recoverShare,
+		WalletPublicKey: pubKeyHex,
+		SignedNonce:     signedNonce,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // Decrypt password using rootPrivKey (Standard AES-GCM ECIES-like)
 func decryptPassword(encryptedPasswordB64 string) (string, error) {
 	encryptedData, err := base64.StdEncoding.DecodeString(encryptedPasswordB64)
@@ -539,6 +610,7 @@ func main() {
 	http.HandleFunc("/tee_wallet/create_key_share", corsMiddleware(createWalletHandler))
 	http.HandleFunc("/tee_wallet/sign_transaction", corsMiddleware(signTransactionHandler))
 	http.HandleFunc("/tee_wallet/tee_pubkey", corsMiddleware(getRootPubKeyHandler))
+	http.HandleFunc("/tee_wallet/test_pubkey", corsMiddleware(testWalletPubKeyHandler))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go Safe Wallet Service Running\n")
