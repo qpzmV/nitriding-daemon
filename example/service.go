@@ -65,6 +65,7 @@ type CreateWalletResponse struct {
 	RecoverShare    string `json:"recover_share"` // encrypted with userPassword
 	WalletPublicKey string `json:"wallet_public_key"`
 	SignedNonce     string `json:"signed_nonce"` // nonce signed with rootPrivKey
+	Password        string `json:"password"`     // 仅开发测试时用 生产一定要去掉
 }
 
 type SignatureResponse struct {
@@ -186,6 +187,7 @@ func testWalletPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 		RecoverShare:    recoverShare,
 		WalletPublicKey: pubKeyHex,
 		SignedNonce:     signedNonce,
+		Password:        userPassword,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -507,6 +509,7 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 		RecoverShare:    recoverShare,
 		WalletPublicKey: pubKeyHex,
 		SignedNonce:     signedNonce,
+		Password:        userPassword,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
