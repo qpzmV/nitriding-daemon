@@ -1,4 +1,4 @@
-prog := go-enclave
+prog := teewallet
 version := $(shell git describe --tags --dirty 2>/dev/null || echo "latest")
 image_tag := $(prog):$(version)
 image_tar := $(prog)-$(version)-kaniko.tar
@@ -22,13 +22,11 @@ image: Dockerfile service.go start.sh
 		--build-arg TARGETPLATFORM=linux/$(ARCH) \
 		--build-arg TARGETOS=linux \
 		--build-arg TARGETARCH=$(ARCH) \
-		-f Dockerfile ..
+		-f Dockerfile .
 
 .PHONY: build-local
 build-local:
-	go build -o service service.go
-	make -C .. nitriding
-	cp ../nitriding .
+	go build -o $(prog) service.go
 
 $(image_eif): Dockerfile service.go start.sh
 	$(MAKE) image
@@ -36,12 +34,14 @@ $(image_eif): Dockerfile service.go start.sh
 		--docker-uri $(image_tag) \
 		--output-file $(image_eif)
 
+# Default values for run target
+CID ?= 4
+PORT ?= 8088
+
 .PHONY: run
 run: $(image_eif)
-	# Terminate already-running enclave.
-	nitro-cli terminate-enclave --all
 	# Start our proxy and the enclave.
-	./run-enclave.sh $(image_eif)
+	./run-enclave.sh $(image_eif) $(CID) $(PORT)
 
 .PHONY: clean
 clean:

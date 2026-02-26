@@ -8,7 +8,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
@@ -31,11 +30,11 @@ import (
 
 const (
 	realTxEnclaveAppURL = "http://localhost:8088"
-	realTxNitridingURL  = "https://localhost:10443/enclave/attestation"
-	realTxNonce         = "1234567890abcdef1234567890abcdef12345678" // 40-digit hex string
-	realTxUserPIN       = "my-secure-pin-123456"
-	realTxRpcURL        = "https://ethereum-sepolia-rpc.publicnode.com" // Sepolia Testnet RPC
-	realTxChainID       = 11155111                                      // Sepolia Chain ID
+	// realTxNitridingURL  = "https://localhost:10443/enclave/attestation"
+	realTxNonce   = "1234567890abcdef1234567890abcdef12345678" // 40-digit hex string
+	realTxUserPIN = "my-secure-pin-123456"
+	realTxRpcURL  = "https://ethereum-sepolia-rpc.publicnode.com" // Sepolia Testnet RPC
+	realTxChainID = 11155111                                      // Sepolia Chain ID
 )
 
 type RealTxCreateWalletResponse struct {
@@ -86,9 +85,9 @@ func fetchRealTxRawPubKey() (string, error) {
 	return pubKeyHex, nil
 }
 
-// fetchRealTxRootPubKeyFromAttestation 从 Nitriding 获取证明文档并比对本地 Hash
+// 2. 从业务接口获取证明文档并比对本地 Hash
 func fetchRealTxRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (string, error) {
-	fmt.Printf("[Step 1] 正在从 Nitriding 获取证明并验证哈希...\n")
+	fmt.Printf("[Step 1] 正在从业务接口获取证明并验证哈希...\n")
 
 	pubKeyBytes, err := hex.DecodeString(rawPubKeyHex)
 	if err != nil {
@@ -97,16 +96,18 @@ func fetchRealTxRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (st
 	localHash := sha256.Sum256(pubKeyBytes)
 	localHashHex := hex.EncodeToString(localHash[:])
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
-	url := fmt.Sprintf("%s?nonce=%s", realTxNitridingURL, nonce)
-	resp, err := client.Get(url)
+	// 请求业务接口的证明
+	url := fmt.Sprintf("%s/tee_wallet/attestation?nonce=%s", realTxEnclaveAppURL, nonce)
+	resp, err := http.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("请求 Nitriding 证明文档失败: %v", err)
+		return "", fmt.Errorf("请求业务接口证明失败: %v", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("业务接口返回错误 [%d]: %s", resp.StatusCode, string(body))
+	}
 
 	body, _ := io.ReadAll(resp.Body)
 	b64Doc := strings.TrimSpace(string(body))
@@ -115,6 +116,7 @@ func fetchRealTxRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (st
 		return "", fmt.Errorf("证明文档 Base64 解码失败: %v", err)
 	}
 
+	// 解析 CBOR (COSE Sign1)
 	var coseSign1 []cbor.RawMessage
 	if err := cbor.Unmarshal(rawDoc, &coseSign1); err != nil {
 		return "", fmt.Errorf("COSE 解析失败: %v", err)
@@ -130,6 +132,7 @@ func fetchRealTxRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (st
 		return "", fmt.Errorf("Payload Map 解析失败: %v", err)
 	}
 
+	// 提取 UserData (后端存储的哈希串)
 	userData, ok := doc["user_data"].([]byte)
 	if !ok {
 		return "", fmt.Errorf("证明文档中未找到 user_data 字段")
@@ -137,12 +140,12 @@ func fetchRealTxRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (st
 	userDataHex := hex.EncodeToString(userData)
 
 	if !strings.Contains(userDataHex, localHashHex) {
-		return "", fmt.Errorf("\u274C 安全警报：公钥哈希匹配失败！业务接口返回的公钥可能被篡改")
+		return "", fmt.Errorf("❌ 安全警报：公钥哈希匹配失败！业务接口返回的公钥可能被篡改")
 	}
 
 	fmt.Println("-------------------------------------------")
 	fmt.Printf("Instance ID: %v\n", doc["module_id"])
-	fmt.Println("\u2705 远程证明验证成功：公钥哈希与硬件签名文档一致。")
+	fmt.Println("✅ 远程证明验证成功：公钥哈希与业务接口返回的一致。")
 	fmt.Println("-------------------------------------------")
 
 	return rawPubKeyHex, nil

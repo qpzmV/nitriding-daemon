@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -12,7 +11,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,14 +26,19 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/tyler-smith/go-bip32"
+
+	"github.com/hf/nsm"
+	"github.com/hf/nsm/request"
+	"github.com/mdlayher/vsock"
 )
 
-const nitridingURL = "http://127.0.0.1:8080"
+// const nitridingURL = "http://127.0.0.1:8080"
 
 // Root keys for the enclave
 var (
-	rootPrivKey *btcec.PrivateKey
-	rootPubKey  *btcec.PublicKey
+	rootPrivKey    *btcec.PrivateKey
+	rootPubKey     *btcec.PublicKey
+	rootPubKeyHash [32]byte
 )
 
 // In-memory storage for Enclave shards
@@ -81,25 +88,25 @@ func initializeRootKeys() error {
 		return fmt.Errorf("failed to generate root private key: %w", err)
 	}
 	rootPubKey = rootPrivKey.PubKey()
-
-	// Register hash of rootPubKey with nitriding
 	pubKeyBytes := rootPubKey.SerializeCompressed()
-	pubKeyHash := sha256.Sum256(pubKeyBytes)
-	pubKeyHashB64 := base64.StdEncoding.EncodeToString(pubKeyHash[:])
+	rootPubKeyHash = sha256.Sum256(pubKeyBytes)
+	// Register hash of rootPubKey with nitriding
+	// pubKeyHash := sha256.Sum256(pubKeyBytes)
+	// pubKeyHashB64 := base64.StdEncoding.EncodeToString(pubKeyHash[:])
 
-	resp, err := http.Post(
-		nitridingURL+"/enclave/hash",
-		"text/plain",
-		bytes.NewReader([]byte(pubKeyHashB64)),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to register hash with nitriding: %w", err)
-	}
-	defer resp.Body.Close()
+	// resp, err := http.Post(
+	// 	nitridingURL+"/enclave/hash",
+	// 	"text/plain",
+	// 	bytes.NewReader([]byte(pubKeyHashB64)),
+	// )
+	// if err != nil {
+	// 	return fmt.Errorf("failed to register hash with nitriding: %w", err)
+	// }
+	// defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("nitriding returned status %d", resp.StatusCode)
-	}
+	// if resp.StatusCode != http.StatusOK {
+	// 	return fmt.Errorf("nitriding returned status %d", resp.StatusCode)
+	// }
 
 	log.Printf("[go] Root keys initialized. Public key: %s\n", hex.EncodeToString(pubKeyBytes))
 	return nil
@@ -376,15 +383,15 @@ func signNonce(nonce string) (string, error) {
 
 // signalReady notifies nitriding that the application is ready.
 func signalReady() error {
-	resp, err := http.Get(nitridingURL + "/enclave/ready")
-	if err != nil {
-		return fmt.Errorf("failed to signal ready: %w", err)
-	}
-	defer resp.Body.Close()
+	// resp, err := http.Get(nitridingURL + "/enclave/ready")
+	// if err != nil {
+	// 	return fmt.Errorf("failed to signal ready: %w", err)
+	// }
+	// defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("expected status code %d but got %d", http.StatusOK, resp.StatusCode)
-	}
+	// if resp.StatusCode != http.StatusOK {
+	// 	return fmt.Errorf("expected status code %d but got %d", http.StatusOK, resp.StatusCode)
+	// }
 	return nil
 }
 
@@ -736,6 +743,79 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+type nonce [20]byte
+
+func getNonceFromReq(r *http.Request) (nonce, error) {
+	var n nonce
+	vals := r.URL.Query()
+	nonceHex := vals.Get("nonce")
+	if nonceHex == "" {
+		return n, fmt.Errorf("could not find nonce in URL query parameters")
+	}
+	if len(nonceHex) != 40 {
+		return n, fmt.Errorf("unexpected nonce format; must be 40-digit hex string")
+	}
+	b, err := hex.DecodeString(nonceHex)
+	if err != nil {
+		return n, err
+	}
+	copy(n[:], b)
+	return n, nil
+}
+
+type AttestationHashes struct {
+	tlsKeyHash [32]byte
+	appKeyHash [32]byte
+}
+
+func (a *AttestationHashes) Serialize() []byte {
+	hashPrefix := []byte{0x12, 32}
+	ser := []byte{}
+	ser = append(ser, append(hashPrefix, a.tlsKeyHash[:]...)...)
+	ser = append(ser, append(hashPrefix, a.appKeyHash[:]...)...)
+	return ser
+}
+
+// attestationHandler provides real attestation data by calling NSM.
+func attestationHandler(w http.ResponseWriter, r *http.Request) {
+	n, err := getNonceFromReq(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	hashes := AttestationHashes{
+		appKeyHash: rootPubKeyHash,
+	}
+
+	// NSM section - Copy from enclave logic
+	s, err := nsm.OpenDefaultSession()
+	if err != nil {
+		log.Printf("[go] Failed to open NSM session: %v\n", err)
+		http.Error(w, "Failed to open NSM session", http.StatusInternalServerError)
+		return
+	}
+	defer s.Close()
+
+	res, err := s.Send(&request.Attestation{
+		Nonce:     n[:],
+		UserData:  hashes.Serialize(),
+		PublicKey: []byte("dummy"), // matching padding in nitriding
+	})
+	if err != nil {
+		log.Printf("[go] Failed to send attestation request: %v\n", err)
+		http.Error(w, "Failed to send attestation request", http.StatusInternalServerError)
+		return
+	}
+	if res.Attestation == nil || res.Attestation.Document == nil {
+		http.Error(w, "NSM device did not return an attestation", http.StatusInternalServerError)
+		return
+	}
+
+	b64Doc := base64.StdEncoding.EncodeToString(res.Attestation.Document)
+	fmt.Fprintln(w, b64Doc)
+}
+
 // corsMiddleware 处理跨域请求
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -767,25 +847,56 @@ func main() {
 	http.HandleFunc("/tee_wallet/sign_transaction", corsMiddleware(signTransactionHandler))
 	http.HandleFunc("/tee_wallet/tee_pubkey", corsMiddleware(getRootPubKeyHandler))
 	http.HandleFunc("/tee_wallet/test_pubkey", corsMiddleware(testWalletPubKeyHandler))
+	http.HandleFunc("/tee_wallet/attestation", corsMiddleware(attestationHandler))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go Safe Wallet Service Running\n")
 	})
 
+	useVsock := os.Getenv("USE_VSOCK") == "true"
+	port := os.Getenv("PORT")
+	if port == "" {
+		if useVsock {
+			port = "8080"
+		} else {
+			port = "8088"
+		}
+	}
+
 	go func() {
-		log.Println("[go] Running server on port 8088")
-		if err := http.ListenAndServe(":8088", nil); err != nil {
+		var (
+			l   net.Listener
+			err error
+		)
+
+		if useVsock {
+			vPort, pErr := strconv.Atoi(port)
+			if pErr != nil {
+				log.Fatalf("Invalid Vsock port: %v", pErr)
+			}
+			log.Printf("[go] Running server on Vsock port %d\n", vPort)
+			l, err = vsock.Listen(uint32(vPort), nil)
+		} else {
+			log.Printf("[go] Running server on TCP port %s\n", port)
+			l, err = net.Listen("tcp", ":"+port)
+		}
+
+		if err != nil {
+			log.Fatalf("Failed to create listener: %v", err)
+		}
+
+		if err := http.Serve(l, nil); err != nil {
 			log.Fatalf("Server failed: %v", err)
 		}
 	}()
 
 	// Signal ready to nitriding
-	time.Sleep(1 * time.Second)
-	if err := signalReady(); err != nil {
-		log.Printf("[go] Error signaling ready: %v\n", err)
-	} else {
-		log.Println("[go] Signalled to nitriding that we're ready.")
-	}
+	// time.Sleep(1 * time.Second)
+	// if err := signalReady(); err != nil {
+	// 	log.Printf("[go] Error signaling ready: %v\n", err)
+	// } else {
+	// 	log.Println("[go] Signalled to nitriding that we're ready.")
+	// }
 
 	// Keep main running
 	select {}

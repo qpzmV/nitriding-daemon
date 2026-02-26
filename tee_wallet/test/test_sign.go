@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -23,13 +22,12 @@ import (
 )
 
 const (
-	enclaveAppURL = "http://localhost:8088"
-	nitridingURL  = "https://localhost:10443/enclave/attestation"
-	testNonce     = "1234567890abcdef1234567890abcdef12345678" // 40-digit hex string
-	testUserPIN   = "my-secure-pin-123456"
+	signEnclaveAppURL = "http://localhost:8088"
+	signTestNonce     = "1234567890abcdef1234567890abcdef12345678" // 40-digit hex string
+	signTestUserPIN   = "my-secure-pin-123456"
 )
 
-type CreateWalletResponse struct {
+type SignCreateWalletResponse struct {
 	AuthShare       string `json:"auth_share"`
 	UserShare       string `json:"user_share"`
 	DeviceShare     string `json:"device_share"`
@@ -38,7 +36,7 @@ type CreateWalletResponse struct {
 	SignedNonce     string `json:"signed_nonce"`
 }
 
-type SignatureRequest struct {
+type SignSignatureRequest struct {
 	EncryptedPassword string `json:"encrypted_password"` // encrypted with rootPubKey
 	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
 	PubKey            string `json:"pub_key"`
@@ -46,15 +44,15 @@ type SignatureRequest struct {
 	AuthShare         string `json:"auth_share"`
 }
 
-type SignatureResponse struct {
+type SignSignatureResponse struct {
 	Signature       string `json:"signature"`
 	WalletPublicKey string `json:"wallet_public_key"`
 }
 
 // 1. 从业务接口获取公钥原文 (TEE_PubKey)
-func fetchRawPubKey() (string, error) {
+func fetchRawPubKeyForSign() (string, error) {
 	fmt.Printf("[Step 0] 正在从业务接口获取公钥原文...\n")
-	resp, err := http.Get(enclaveAppURL + "/tee_wallet/tee_pubkey")
+	resp, err := http.Get(signEnclaveAppURL + "/tee_wallet/tee_pubkey")
 	if err != nil {
 		return "", fmt.Errorf("无法连接到业务接口: %v", err)
 	}
@@ -77,9 +75,9 @@ func fetchRawPubKey() (string, error) {
 	return pubKeyHex, nil
 }
 
-// 2. 从 Nitriding 获取证明文档并比对本地 Hash，确保公钥可信
-func fetchRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (string, error) {
-	fmt.Printf("[Step 1] 正在从 Nitriding 获取证明并验证哈希...\n")
+// 2. 从业务接口获取证明文档并比对本地 Hash，确保公钥可信
+func fetchSignRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (string, error) {
+	fmt.Printf("[Step 1] 正在从业务接口获取证明并验证哈希...\n")
 
 	// 计算本地获取到的公钥的 SHA256 哈希
 	pubKeyBytes, err := hex.DecodeString(rawPubKeyHex)
@@ -89,17 +87,18 @@ func fetchRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (string, 
 	localHash := sha256.Sum256(pubKeyBytes)
 	localHashHex := hex.EncodeToString(localHash[:])
 
-	// 请求 Nitriding 证明
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: tr}
-	url := fmt.Sprintf("%s?nonce=%s", nitridingURL, nonce)
-	resp, err := client.Get(url)
+	// 请求业务接口的证明
+	url := fmt.Sprintf("%s/tee_wallet/attestation?nonce=%s", signEnclaveAppURL, nonce)
+	resp, err := http.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("请求 Nitriding 证明文档失败: %v", err)
+		return "", fmt.Errorf("请求业务接口证明失败: %v", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("业务接口返回错误 [%d]: %s", resp.StatusCode, string(body))
+	}
 
 	body, _ := io.ReadAll(resp.Body)
 	b64Doc := strings.TrimSpace(string(body))
@@ -138,14 +137,14 @@ func fetchRootPubKeyFromAttestation(nonce string, rawPubKeyHex string) (string, 
 
 	fmt.Println("-------------------------------------------")
 	fmt.Printf("Instance ID: %v\n", doc["module_id"])
-	fmt.Println("✅ 远程证明验证成功：公钥哈希与硬件签名文档一致。")
+	fmt.Println("✅ 远程证明验证成功：公钥哈希与业务接口返回的一致。")
 	fmt.Println("-------------------------------------------")
 
 	return rawPubKeyHex, nil
 }
 
 // 3. ECIES 风格加密函数 (ECDH + AES-GCM)
-func encryptPassword(rootPubKeyHex string, password string) (string, error) {
+func encryptPasswordForSign(rootPubKeyHex string, password string) (string, error) {
 	pubKeyBytes, err := hex.DecodeString(rootPubKeyHex)
 	if err != nil {
 		return "", err
@@ -192,10 +191,10 @@ func encryptPassword(rootPubKeyHex string, password string) (string, error) {
 }
 
 // 4. 创建钱包
-func createWallet(verifiedPubKey string) (*CreateWalletResponse, error) {
+func createWalletForSign(verifiedPubKey string) (*SignCreateWalletResponse, error) {
 	fmt.Printf("\n[Step 2] 正在请求 Enclave 创建钱包...\n")
 
-	encryptedPass, err := encryptPassword(verifiedPubKey, testUserPIN)
+	encryptedPass, err := encryptPasswordForSign(verifiedPubKey, signTestUserPIN)
 	if err != nil {
 		return nil, fmt.Errorf("加密密码失败: %v", err)
 	}
@@ -203,13 +202,13 @@ func createWallet(verifiedPubKey string) (*CreateWalletResponse, error) {
 	requestBody := map[string]string{
 		"user_id":            "user_sign_test",
 		"login_token":        "token_sign_test",
-		"nonce":              testNonce,
+		"nonce":              signTestNonce,
 		"encrypted_password": encryptedPass,
 		"tee_pk":             verifiedPubKey,
 	}
 	jsonData, _ := json.Marshal(requestBody)
 
-	resp, err := http.Post(enclaveAppURL+"/tee_wallet/create_key_share", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(signEnclaveAppURL+"/tee_wallet/create_key_share", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("业务请求失败: %v", err)
 	}
@@ -220,7 +219,7 @@ func createWallet(verifiedPubKey string) (*CreateWalletResponse, error) {
 		return nil, fmt.Errorf("后端业务逻辑返回错误 [%d]: %s", resp.StatusCode, string(body))
 	}
 
-	var walletResp CreateWalletResponse
+	var walletResp SignCreateWalletResponse
 	if err := json.Unmarshal(body, &walletResp); err != nil {
 		return nil, fmt.Errorf("解析业务响应失败: %v", err)
 	}
@@ -230,12 +229,12 @@ func createWallet(verifiedPubKey string) (*CreateWalletResponse, error) {
 }
 
 // 5. 签名交易
-func signTransaction(walletPubKey string, encryptedPassword string, deviceShare string, authShare string, rawTx string) (*SignatureResponse, error) {
+func signTransactionForSign(walletPubKey string, encryptedPassword string, deviceShare string, authShare string, rawTx string) (*SignSignatureResponse, error) {
 	fmt.Printf("\n[Step 3] 正在请求 Enclave 签名交易...\n")
 	fmt.Printf("  - 钱包公钥: %s\n", walletPubKey)
 	fmt.Printf("  - 原始交易: %s\n", rawTx)
 
-	signReq := SignatureRequest{
+	signReq := SignSignatureRequest{
 		EncryptedPassword: encryptedPassword,
 		DeviceShare:       deviceShare,
 		PubKey:            walletPubKey,
@@ -244,7 +243,7 @@ func signTransaction(walletPubKey string, encryptedPassword string, deviceShare 
 	}
 	jsonData, _ := json.Marshal(signReq)
 
-	resp, err := http.Post(enclaveAppURL+"/tee_wallet/sign_transaction", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(signEnclaveAppURL+"/tee_wallet/sign_transaction", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("签名请求失败: %v", err)
 	}
@@ -255,7 +254,7 @@ func signTransaction(walletPubKey string, encryptedPassword string, deviceShare 
 		return nil, fmt.Errorf("签名接口返回错误 [%d]: %s", resp.StatusCode, string(body))
 	}
 
-	var sigResp SignatureResponse
+	var sigResp SignSignatureResponse
 	if err := json.Unmarshal(body, &sigResp); err != nil {
 		return nil, fmt.Errorf("解析签名响应失败: %v", err)
 	}
@@ -265,7 +264,7 @@ func signTransaction(walletPubKey string, encryptedPassword string, deviceShare 
 }
 
 // 6. 验证签名 (使用 BIP44 派生的公钥)
-func verifyTransactionSignature(signature string, rawTx string, walletPubKey string) error {
+func verifyTransactionSignatureForSign(signature string, rawTx string, walletPubKey string) error {
 	fmt.Printf("\n[Step 4] 正在验证签名...\n")
 
 	sigBytes, err := base64.StdEncoding.DecodeString(signature)
@@ -309,25 +308,25 @@ func main() {
 	log.Println("=== Enclave 交易签名测试脚本启动 ===")
 
 	// A. 获取并验证 Enclave 公钥
-	rawPubKey, err := fetchRawPubKey()
+	rawPubKey, err := fetchRawPubKeyForSign()
 	if err != nil {
 		log.Fatalf("❌ 步骤 0 失败: %v", err)
 	}
 
-	verifiedPubKey, err := fetchRootPubKeyFromAttestation(testNonce, rawPubKey)
+	verifiedPubKey, err := fetchSignRootPubKeyFromAttestation(signTestNonce, rawPubKey)
 	if err != nil {
 		log.Fatalf("❌ 步骤 1 失败: %v", err)
 	}
 
 	// B. 创建钱包
-	walletResp, err := createWallet(verifiedPubKey)
+	walletResp, err := createWalletForSign(verifiedPubKey)
 	if err != nil {
 		log.Fatalf("❌ 创建钱包失败: %v", err)
 	}
 
 	// C. 准备签名所需的加密数据
 	fmt.Printf("\n[准备签名] 正在加密用户密码...\n")
-	encryptedPassword, err := encryptPassword(verifiedPubKey, testUserPIN)
+	encryptedPassword, err := encryptPasswordForSign(verifiedPubKey, signTestUserPIN)
 	if err != nil {
 		log.Fatalf("❌ 加密密码失败: %v", err)
 	}
@@ -336,13 +335,13 @@ func main() {
 	// D. 签名交易 (直接使用加密的 device_share 和加密的密码)
 	// 使用以太坊 Sepolia 测试网的真实 EIP-1559 交易示例 (链 ID: 11155111)
 	testRawTx := "02f87183aa284780843b9aca0084773594008252089471c7656ec7ab88b098defb751b7401b5f6d8976f880de0b6b3a764000080c0"
-	sigResp, err := signTransaction(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, walletResp.AuthShare, testRawTx)
+	sigResp, err := signTransactionForSign(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, walletResp.AuthShare, testRawTx)
 	if err != nil {
 		log.Fatalf("❌ 签名交易失败: %v", err)
 	}
 
 	// E. 验证签名
-	err = verifyTransactionSignature(sigResp.Signature, testRawTx, walletResp.WalletPublicKey)
+	err = verifyTransactionSignatureForSign(sigResp.Signature, testRawTx, walletResp.WalletPublicKey)
 	if err != nil {
 		log.Printf("⚠️  签名验证: %v", err)
 		log.Printf("注意：由于使用了 BIP44 派生，验证可能需要使用派生后的公钥")
