@@ -43,6 +43,7 @@ type SignatureRequest struct {
 	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
 	PubKey            string `json:"pub_key"`
 	RawTx             string `json:"raw_tx"`
+	AuthShare         string `json:"auth_share"`
 }
 
 type SignatureResponse struct {
@@ -229,7 +230,7 @@ func createWallet(verifiedPubKey string) (*CreateWalletResponse, error) {
 }
 
 // 5. 签名交易
-func signTransaction(walletPubKey string, encryptedPassword string, deviceShare string, rawTx string) (*SignatureResponse, error) {
+func signTransaction(walletPubKey string, encryptedPassword string, deviceShare string, authShare string, rawTx string) (*SignatureResponse, error) {
 	fmt.Printf("\n[Step 3] 正在请求 Enclave 签名交易...\n")
 	fmt.Printf("  - 钱包公钥: %s\n", walletPubKey)
 	fmt.Printf("  - 原始交易: %s\n", rawTx)
@@ -239,6 +240,7 @@ func signTransaction(walletPubKey string, encryptedPassword string, deviceShare 
 		DeviceShare:       deviceShare,
 		PubKey:            walletPubKey,
 		RawTx:             rawTx,
+		AuthShare:         authShare,
 	}
 	jsonData, _ := json.Marshal(signReq)
 
@@ -334,7 +336,7 @@ func main() {
 	// D. 签名交易 (直接使用加密的 device_share 和加密的密码)
 	// 使用以太坊 Sepolia 测试网的真实 EIP-1559 交易示例 (链 ID: 11155111)
 	testRawTx := "02f87183aa284780843b9aca0084773594008252089471c7656ec7ab88b098defb751b7401b5f6d8976f880de0b6b3a764000080c0"
-	sigResp, err := signTransaction(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, testRawTx)
+	sigResp, err := signTransaction(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, walletResp.AuthShare, testRawTx)
 	if err != nil {
 		log.Fatalf("❌ 签名交易失败: %v", err)
 	}

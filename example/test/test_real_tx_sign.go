@@ -52,6 +52,7 @@ type RealTxSignatureRequest struct {
 	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
 	PubKey            string `json:"pub_key"`
 	RawTx             string `json:"raw_tx"`
+	AuthShare         string `json:"auth_share"`
 }
 
 type RealTxSignatureResponse struct {
@@ -229,7 +230,7 @@ func createRealTxWallet(verifiedPubKey string) (*RealTxCreateWalletResponse, err
 }
 
 // signTransactionWithRecovery 签名交易并获取完整的以太坊签名 (含 Recovery ID)
-func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, deviceShare string, tx *types.Transaction) ([]byte, error) {
+func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, deviceShare string, authShare string, tx *types.Transaction) ([]byte, error) {
 	fmt.Printf("\n[Step 3] 正在请求 Enclave 签名交易...\n")
 
 	// 计算交易哈希
@@ -248,6 +249,7 @@ func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, 
 		DeviceShare:       deviceShare,
 		PubKey:            walletPubKey,
 		RawTx:             rawTxHex,
+		AuthShare:         authShare,
 	}
 	jsonData, _ := json.Marshal(signReq)
 
@@ -383,7 +385,7 @@ func main() {
 
 	// 5. 请求 Enclave 签名
 	encryptedPassword, _ := encryptRealTxPassword(verifiedPubKey, realTxUserPIN)
-	fullSignature, err := signTransactionWithRecovery(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, tx)
+	fullSignature, err := signTransactionWithRecovery(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, walletResp.AuthShare, tx)
 	if err != nil {
 		log.Fatalf("\u274C 签名失败: %v", err)
 	}

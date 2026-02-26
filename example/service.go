@@ -53,7 +53,8 @@ type SignatureRequest struct {
 	EncryptedPassword string `json:"encrypted_password"` // encrypted with rootPubKey
 	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
 	PubKey            string `json:"pub_key"`
-	RawTx             string `json:"raw_tx"` // hex encoded raw transaction bytes
+	RawTx             string `json:"raw_tx"`     // hex encoded raw transaction bytes
+	AuthShare         string `json:"auth_share"` // [Optional] encrypted with userPassword + rootPubKey
 }
 
 // Response structures
@@ -295,6 +296,44 @@ func encryptWithPasswordAndRoot(data []byte, password string) (string, error) {
 
 	ciphertext := gcm.Seal(nonce, nonce, data, nil)
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// Decrypt data with both password and rootPrivKey
+func decryptWithPasswordAndRoot(encryptedDataB64 string, password string) ([]byte, error) {
+	encryptedData, err := base64.StdEncoding.DecodeString(encryptedDataB64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode b64: %w", err)
+	}
+
+	// First reconstruct the key
+	passwordKey := sha256.Sum256([]byte(password))
+	rootKey := sha256.Sum256(rootPrivKey.Serialize())
+	combinedKey := sha256.Sum256(append(passwordKey[:], rootKey[:]...))
+
+	block, err := aes.NewCipher(combinedKey[:])
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(encryptedData) < nonceSize {
+		return nil, fmt.Errorf("encrypted data too short")
+	}
+
+	nonce := encryptedData[:nonceSize]
+	ciphertext := encryptedData[nonceSize:]
+
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return plaintext, nil
 }
 
 // Generate deterministic private key from user metadata
@@ -623,8 +662,23 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	userPart, _ := gcm.Open(nil, deviceShareEncrypted[:nonceSize], deviceShareEncrypted[nonceSize:], nil)
 
 	storeMutex.RLock()
-	enclavePart := shardsStore[req.PubKey]
+	enclavePart, ok := shardsStore[req.PubKey]
 	storeMutex.RUnlock()
+
+	// 2.2 如果内存中没有，尝试从请求参数里的 AuthShare 解密
+	if !ok {
+		if req.AuthShare == "" {
+			http.Error(w, "Wallet shard not found in memory and no AuthShare provided", http.StatusNotFound)
+			return
+		}
+		log.Printf("[go] Shard1 missing from memory, attempting to decrypt from AuthShare for wallet: %s\n", req.PubKey)
+		enclavePart, err = decryptWithPasswordAndRoot(req.AuthShare, userPassword)
+		if err != nil {
+			log.Printf("[go] Failed to decrypt AuthShare: %v\n", err)
+			http.Error(w, "Failed to decrypt AuthShare", http.StatusBadRequest)
+			return
+		}
+	}
 
 	selection := map[byte][]byte{
 		enclavePart[0]: enclavePart[1:],
