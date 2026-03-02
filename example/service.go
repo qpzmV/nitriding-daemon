@@ -24,6 +24,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/tyler-smith/go-bip32"
+
+	"crypto/ed25519"
+
+	"golang.org/x/crypto/blake2b"
 )
 
 const nitridingURL = "http://127.0.0.1:8080"
@@ -517,127 +521,11 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[go] Created wallet for user %s: %s\n", req.UserID, pubKeyHex)
 }
 
-// // signTransactionHandler handles signing using combined shards
-// func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
-// 	if r.Method != http.MethodPost {
-// 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-// 		return
-// 	}
-
-// 	var req SignatureRequest
-// 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-// 		http.Error(w, "Invalid request", http.StatusBadRequest)
-// 		return
-// 	}
-// 	log.Printf(">> [go] Signed tx for wallet: %s\n", req.PubKey)
-
-// 	// 1. Decrypt user password using rootPrivKey
-// 	userPassword, err := decryptPassword(req.EncryptedPassword)
-// 	if err != nil {
-// 		log.Printf("[go] Failed to decrypt password: %v\n", err)
-// 		http.Error(w, "Failed to decrypt password", http.StatusBadRequest)
-// 		return
-// 	}
-
-// 	// 2. Decrypt device_share using user password
-// 	deviceShareEncrypted, err := base64.StdEncoding.DecodeString(req.DeviceShare)
-// 	if err != nil {
-// 		http.Error(w, "Invalid device share format", http.StatusBadRequest)
-// 		return
-// 	}
-
-// 	// Derive key from password
-// 	passwordKey := sha256.Sum256([]byte(userPassword))
-// 	block, err := aes.NewCipher(passwordKey[:])
-// 	if err != nil {
-// 		http.Error(w, "Failed to create cipher", http.StatusInternalServerError)
-// 		return
-// 	}
-
-// 	gcm, err := cipher.NewGCM(block)
-// 	if err != nil {
-// 		http.Error(w, "Failed to create GCM", http.StatusInternalServerError)
-// 		return
-// 	}
-
-// 	nonceSize := gcm.NonceSize()
-// 	if len(deviceShareEncrypted) < nonceSize {
-// 		http.Error(w, "Device share too short", http.StatusBadRequest)
-// 		return
-// 	}
-
-// 	nonce := deviceShareEncrypted[:nonceSize]
-// 	ciphertext := deviceShareEncrypted[nonceSize:]
-// 	userPart, err := gcm.Open(nil, nonce, ciphertext, nil)
-// 	if err != nil {
-// 		log.Printf("[go] Failed to decrypt device share: %v\n", err)
-// 		http.Error(w, "Failed to decrypt device share", http.StatusBadRequest)
-// 		return
-// 	}
-
-// 	// 3. Get enclave shard from memory
-// 	storeMutex.RLock()
-// 	enclavePart, ok := shardsStore[req.PubKey]
-// 	storeMutex.RUnlock()
-// 	if !ok {
-// 		http.Error(w, "Wallet not found", http.StatusNotFound)
-// 		return
-// 	}
-
-// 	// 4. Combine shards using Shamir
-// 	selection := map[byte][]byte{
-// 		enclavePart[0]: enclavePart[1:],
-// 		userPart[0]:    userPart[1:],
-// 	}
-// 	recoveredSecret, err := shamir.Combine(selection)
-// 	if err != nil {
-// 		http.Error(w, "Failed to combine shards", http.StatusInternalServerError)
-// 		return
-// 	}
-
-// 	// 5. Derive child key (BIP44)
-// 	master, _ := bip32.NewMasterKey(recoveredSecret)
-// 	purpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
-// 	coin, _ := purpose.NewChildKey(bip32.FirstHardenedChild + 60)
-// 	account, _ := coin.NewChildKey(bip32.FirstHardenedChild + 0)
-// 	change, _ := account.NewChildKey(0)
-// 	addressKey, _ := change.NewChildKey(0)
-
-// 	privKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
-
-// 	// 5. Decode RawTx and compute Keccak-256 Hash
-// 	txBytes, err := hex.DecodeString(req.RawTx)
-// 	if err != nil {
-// 		log.Printf("[go] Failed to decode RawTx hex: %v\n", err)
-// 		http.Error(w, "Invalid raw_tx hex", http.StatusBadRequest)
-// 		return
-// 	}
-
-// 	// 以太坊标准：对 RLP 编码后的原始交易进行 Keccak256 哈希
-// 	hasher := sha3.NewLegacyKeccak256()
-// 	hasher.Write(txBytes)
-// 	txHashHash := hasher.Sum(nil)
-
-// 	// 6. Sign using ECDSA
-// 	sig := ecdsa.Sign(privKey, txHashHash)
-
-// 	// Derive public key from the same private key used for signing
-// 	pubKeyHex := hex.EncodeToString(privKey.PubKey().SerializeCompressed())
-
-// 	resp := SignatureResponse{
-// 		Signature:       base64.StdEncoding.EncodeToString(sig.Serialize()),
-// 		WalletPublicKey: pubKeyHex,
-// 	}
-
-// 	w.Header().Set("Content-Type", "application/json")
-// 	json.NewEncoder(w).Encode(resp)
-// 	log.Printf("<< [go] Signed tx for wallet: %s\n", pubKeyHex)
-// }
-
 // 假设在 const 处定义了 ChainID (需与测试代码一致)
 const enclaveChainID = 11155111
 
-func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
+// signEvmTxHandler 处理 EVM 交易签名
+func signEvmTxHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -656,7 +544,7 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. 解密 device_share 并通过 Shamir 恢复私钥 (保持你原有的逻辑)
+	// 2. 解密 device_share 并通过 Shamir 恢复私钥
 	deviceShareEncrypted, _ := base64.StdEncoding.DecodeString(req.DeviceShare)
 	passwordKey := sha256.Sum256([]byte(userPassword))
 	block, _ := aes.NewCipher(passwordKey[:])
@@ -698,8 +586,6 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	addressKey, _ := change.NewChildKey(0)
 	privKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
 
-	// --- 核心修改部分：对齐以太坊哈希 ---
-
 	// 4. 解析 RawTx
 	txBytes, err := hex.DecodeString(req.RawTx)
 	if err != nil {
@@ -716,14 +602,12 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. 计算符合 EIP-155 标准的签名哈希
-	// 必须使用相同的 ChainID：11155111
 	signer := types.LatestSignerForChainID(big.NewInt(enclaveChainID))
 	txHash := signer.Hash(&tx)
 
 	log.Printf("[go] Enclave computed Hash: %s\n", txHash.Hex())
 
 	// 6. 使用私钥签名该哈希
-	// 注意：这里使用的是传统的 ECDSA 签名（不带 V），返回 DER 格式
 	sig := ecdsa.Sign(privKey, txHash.Bytes())
 
 	// 7. 返回结果
@@ -736,17 +620,109 @@ func signTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// signSuiTxHandler 处理 SUI 交易签名
+func signSuiTxHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req SignatureRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// 1. 解密用户密码
+	userPassword, err := decryptPassword(req.EncryptedPassword)
+	if err != nil {
+		http.Error(w, "Failed to decrypt password", http.StatusBadRequest)
+		return
+	}
+
+	// 2. 恢复 Shamir 分片并恢复私钥
+	deviceShareEncrypted, _ := base64.StdEncoding.DecodeString(req.DeviceShare)
+	passwordKey := sha256.Sum256([]byte(userPassword))
+	block, _ := aes.NewCipher(passwordKey[:])
+	gcm, _ := cipher.NewGCM(block)
+	nonceSize := gcm.NonceSize()
+	userPart, _ := gcm.Open(nil, deviceShareEncrypted[:nonceSize], deviceShareEncrypted[nonceSize:], nil)
+
+	storeMutex.RLock()
+	enclavePart, ok := shardsStore[req.PubKey]
+	storeMutex.RUnlock()
+
+	if !ok {
+		if req.AuthShare == "" {
+			http.Error(w, "Wallet shard not found", http.StatusNotFound)
+			return
+		}
+		enclavePart, err = decryptWithPasswordAndRoot(req.AuthShare, userPassword)
+		if err != nil {
+			http.Error(w, "Failed to decrypt AuthShare", http.StatusBadRequest)
+			return
+		}
+	}
+
+	selection := map[byte][]byte{
+		enclavePart[0]: enclavePart[1:],
+		userPart[0]:    userPart[1:],
+	}
+	recoveredSecret, _ := shamir.Combine(selection)
+
+	// 3. 派生 SUI 私钥 (BIP44)
+	// SUI 路径: m/44'/784'/0'/0'/0'
+	master, _ := bip32.NewMasterKey(recoveredSecret)
+	purpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
+	coin, _ := purpose.NewChildKey(bip32.FirstHardenedChild + 784)
+	account, _ := coin.NewChildKey(bip32.FirstHardenedChild + 0)
+	change, _ := account.NewChildKey(bip32.FirstHardenedChild + 0)
+	addressKey, _ := change.NewChildKey(bip32.FirstHardenedChild + 0)
+
+	privKey := ed25519.NewKeyFromSeed(addressKey.Key)
+	pubKey := privKey.Public().(ed25519.PublicKey)
+
+	// 4. 解析 RawTx
+	txBytes, err := hex.DecodeString(req.RawTx)
+	if err != nil {
+		http.Error(w, "Invalid raw_tx hex", http.StatusBadRequest)
+		return
+	}
+
+	// 5. 计算 SUI Intent Hash
+	// SUI Intent: [IntentScope(0), Version(0), AppID(0)] + tx_bytes
+	intent := []byte{0, 0, 0}
+	intent = append(intent, txBytes...)
+
+	h, _ := blake2b.New256(nil)
+	h.Write(intent)
+	txHash := h.Sum(nil)
+
+	// 6. 使用 Ed25519 签名
+	sig := ed25519.Sign(privKey, txHash)
+
+	// 7. 返回序列化签名: [flag(0)] + [sig(64)] + [pubkey(32)]
+	serializedSig := make([]byte, 1+64+32)
+	serializedSig[0] = 0 // Ed25519 flag
+	copy(serializedSig[1:], sig)
+	copy(serializedSig[1+64:], pubKey)
+
+	resp := SignatureResponse{
+		Signature:       base64.StdEncoding.EncodeToString(serializedSig),
+		WalletPublicKey: hex.EncodeToString(pubKey),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // corsMiddleware 处理跨域请求
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 允许的源：开发环境可以设为 *，生产环境建议设为具体的域名
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		// 允许的请求方法
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-		// 允许的请求头
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 
-		// 处理浏览器发出的“预检”请求 (Preflight)
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -764,7 +740,8 @@ func main() {
 
 	// Register HTTP handlers with CORS middleware
 	http.HandleFunc("/tee_wallet/create_key_share", corsMiddleware(createWalletHandler))
-	http.HandleFunc("/tee_wallet/sign_transaction", corsMiddleware(signTransactionHandler))
+	http.HandleFunc("/tee_wallet/sign_evm_tx", corsMiddleware(signEvmTxHandler))
+	http.HandleFunc("/tee_wallet/sign_sui_tx", corsMiddleware(signSuiTxHandler))
 	http.HandleFunc("/tee_wallet/tee_pubkey", corsMiddleware(getRootPubKeyHandler))
 	http.HandleFunc("/tee_wallet/test_pubkey", corsMiddleware(testWalletPubKeyHandler))
 

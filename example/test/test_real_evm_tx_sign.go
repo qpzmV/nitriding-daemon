@@ -253,7 +253,7 @@ func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, 
 	}
 	jsonData, _ := json.Marshal(signReq)
 
-	resp, err := http.Post(realTxEnclaveAppURL+"/tee_wallet/sign_transaction", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(realTxEnclaveAppURL+"/tee_wallet/sign_evm_tx", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("签名请求失败: %v", err)
 	}
