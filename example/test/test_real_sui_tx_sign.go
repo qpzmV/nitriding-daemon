@@ -41,6 +41,7 @@ type SuiCreateWalletResponse struct {
 	DeviceShare     string `json:"device_share"`
 	RecoverShare    string `json:"recover_share"`
 	WalletPublicKey string `json:"wallet_public_key"`
+	SuiPublicKey    string `json:"sui_public_key"`
 	SignedNonce     string `json:"signed_nonce"`
 }
 
@@ -207,7 +208,7 @@ func createSuiWallet(verifiedPubKey string) (*SuiCreateWalletResponse, error) {
 	}
 	jsonData, _ := json.Marshal(requestBody)
 
-	resp, err := http.Post(suiEnclaveAppURL+"/tee_wallet/test_pubkey", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(suiEnclaveAppURL+"/tee_wallet/get_fixed_sui_pubkey_for_test", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("业务请求失败: %v", err)
 	}
@@ -301,7 +302,7 @@ func main() {
 	// 4. 派生 SUI 地址
 	// 注意：在 example/service.go 中，SUI 派生路径是 m/44'/784'/0'/0'/0'，
 	// 返回的是该路径下的公钥。
-	suiAddr, err := deriveSuiAddressByPubKey(walletResp.WalletPublicKey)
+	suiAddr, err := deriveSuiAddressByPubKey(walletResp.SuiPublicKey)
 	if err != nil {
 		log.Fatalf("❌ 派生 SUI 地址失败: %v", err)
 	}

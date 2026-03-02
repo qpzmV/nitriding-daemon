@@ -68,8 +68,9 @@ type CreateWalletResponse struct {
 	DeviceShare     string `json:"device_share"`  // encrypted with userPassword
 	RecoverShare    string `json:"recover_share"` // encrypted with userPassword
 	WalletPublicKey string `json:"wallet_public_key"`
-	SignedNonce     string `json:"signed_nonce"` // nonce signed with rootPrivKey
-	Password        string `json:"password"`     // 仅开发测试时用 生产一定要去掉
+	SuiPublicKey    string `json:"sui_public_key"` // New SUI Public Key
+	SignedNonce     string `json:"signed_nonce"`   // nonce signed with rootPrivKey
+	Password        string `json:"password"`       // 仅开发测试时用 生产一定要去掉
 }
 
 type SignatureResponse struct {
@@ -155,6 +156,15 @@ func testWalletPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 	derivedPrivKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
 	pubKeyHex := hex.EncodeToString(derivedPrivKey.PubKey().SerializeCompressed())
 
+	// 2.2 生成 SUI 公钥 (Ed25519, path: m/44'/784'/0'/0'/0')
+	suiPurpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
+	suiCoin, _ := suiPurpose.NewChildKey(bip32.FirstHardenedChild + 784)
+	suiAccount, _ := suiCoin.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiChange, _ := suiAccount.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiAddressKey, _ := suiChange.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiPrivKey := ed25519.NewKeyFromSeed(suiAddressKey.Key)
+	suiPubKeyHex := hex.EncodeToString(suiPrivKey.Public().(ed25519.PublicKey))
+
 	// 3. 将种子私钥分成 3 个分片，阈值为 2
 	parts, err := shamir.Split(testSeed, 3, 2)
 	if err != nil {
@@ -190,6 +200,7 @@ func testWalletPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 		DeviceShare:     deviceShare,
 		RecoverShare:    recoverShare,
 		WalletPublicKey: pubKeyHex,
+		SuiPublicKey:    suiPubKeyHex,
 		SignedNonce:     signedNonce,
 		Password:        userPassword,
 	}
@@ -199,6 +210,88 @@ func testWalletPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Decrypt password using rootPrivKey (Standard AES-GCM ECIES-like)
+// getFixedSuiPubKeyForTestHandler 用于测试，固定初始化并返回 SUI 公钥和配套分片
+func getFixedSuiPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
+	var req CreateWalletRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// 1. 固定一个 32 字节的种子私钥
+	testSeedHex := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	testSeed, _ := hex.DecodeString(testSeedHex)
+
+	// 解密用户密码
+	userPassword, err := decryptPassword(req.EncryptedPassword)
+	if err != nil {
+		http.Error(w, "Failed to decrypt password", http.StatusBadRequest)
+		return
+	}
+
+	// 2. 生成基于 BIP44 的 EVM 公钥 (用于索引)
+	master, _ := bip32.NewMasterKey(testSeed)
+	purpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
+	coin, _ := purpose.NewChildKey(bip32.FirstHardenedChild + 60)
+	account, _ := coin.NewChildKey(bip32.FirstHardenedChild + 0)
+	change, _ := account.NewChildKey(0)
+	addressKey, _ := change.NewChildKey(0)
+	derivedPrivKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
+	pubKeyHex := hex.EncodeToString(derivedPrivKey.PubKey().SerializeCompressed())
+
+	// 2.2 生成 SUI 公钥 (Ed25519, path: m/44'/784'/0'/0'/0')
+	suiPurpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
+	suiCoin, _ := suiPurpose.NewChildKey(bip32.FirstHardenedChild + 784)
+	suiAccount, _ := suiCoin.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiChange, _ := suiAccount.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiAddressKey, _ := suiChange.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiPrivKey := ed25519.NewKeyFromSeed(suiAddressKey.Key)
+	suiPubKeyHex := hex.EncodeToString(suiPrivKey.Public().(ed25519.PublicKey))
+
+	// 3. 将种子私钥分成 3 个分片，阈值为 2
+	parts, err := shamir.Split(testSeed, 3, 2)
+	if err != nil {
+		http.Error(w, "Failed to split secret", http.StatusInternalServerError)
+		return
+	}
+
+	var shardIDs []byte
+	for k := range parts {
+		shardIDs = append(shardIDs, k)
+	}
+	shard1 := append([]byte{shardIDs[0]}, parts[shardIDs[0]]...)
+	shard2 := append([]byte{shardIDs[1]}, parts[shardIDs[1]]...)
+	shard3 := append([]byte{shardIDs[2]}, parts[shardIDs[2]]...)
+
+	// 4. 将分片 1 存入 Enclave 内存 (模拟存储)
+	storeMutex.Lock()
+	shardsStore[pubKeyHex] = shard1
+	storeMutex.Unlock()
+
+	// 5. 加解密并返回
+	authShare, _ := encryptWithPasswordAndRoot(shard1, userPassword)
+	userShare, _ := encryptWithPasswordAndRoot(shard2, userPassword)
+	deviceShare, _ := encryptWithPassword(shard2, userPassword)
+	recoverShare, _ := encryptWithPassword(shard3, userPassword)
+
+	// 6. 签名 nonce
+	signedNonce, _ := signNonce(req.Nonce)
+
+	resp := CreateWalletResponse{
+		AuthShare:       authShare,
+		UserShare:       userShare,
+		DeviceShare:     deviceShare,
+		RecoverShare:    recoverShare,
+		WalletPublicKey: pubKeyHex,
+		SuiPublicKey:    suiPubKeyHex,
+		SignedNonce:     signedNonce,
+		Password:        userPassword,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 func decryptPassword(encryptedPasswordB64 string) (string, error) {
 	encryptedData, err := base64.StdEncoding.DecodeString(encryptedPasswordB64)
 	if err != nil {
@@ -491,6 +584,15 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 	derivedPrivKey, _ := btcec.PrivKeyFromBytes(addressKey.Key)
 	pubKeyHex := hex.EncodeToString(derivedPrivKey.PubKey().SerializeCompressed())
 
+	// 5.2 生成 SUI 公钥 (Ed25519, path: m/44'/784'/0'/0'/0')
+	suiPurpose, _ := master.NewChildKey(bip32.FirstHardenedChild + 44)
+	suiCoin, _ := suiPurpose.NewChildKey(bip32.FirstHardenedChild + 784)
+	suiAccount, _ := suiCoin.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiChange, _ := suiAccount.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiAddressKey, _ := suiChange.NewChildKey(bip32.FirstHardenedChild + 0)
+	suiPrivKey := ed25519.NewKeyFromSeed(suiAddressKey.Key)
+	suiPubKeyHex := hex.EncodeToString(suiPrivKey.Public().(ed25519.PublicKey))
+
 	log.Printf("[go] Derived BIP44 public key: %s\n", pubKeyHex)
 
 	// 6. Store shard1 (auth_share) in enclave memory using DERIVED public key as index
@@ -512,6 +614,7 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 		DeviceShare:     deviceShare,
 		RecoverShare:    recoverShare,
 		WalletPublicKey: pubKeyHex,
+		SuiPublicKey:    suiPubKeyHex,
 		SignedNonce:     signedNonce,
 		Password:        userPassword,
 	}
@@ -744,6 +847,7 @@ func main() {
 	http.HandleFunc("/tee_wallet/sign_sui_tx", corsMiddleware(signSuiTxHandler))
 	http.HandleFunc("/tee_wallet/tee_pubkey", corsMiddleware(getRootPubKeyHandler))
 	http.HandleFunc("/tee_wallet/test_pubkey", corsMiddleware(testWalletPubKeyHandler))
+	http.HandleFunc("/tee_wallet/get_fixed_sui_pubkey_for_test", corsMiddleware(getFixedSuiPubKeyForTestHandler))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Go Safe Wallet Service Running\n")
