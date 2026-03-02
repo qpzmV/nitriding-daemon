@@ -53,6 +53,7 @@ type RealTxSignatureRequest struct {
 	PubKey            string `json:"pub_key"`
 	RawTx             string `json:"raw_tx"`
 	AuthShare         string `json:"auth_share"`
+	ChainID           int64  `json:"chain_id"`
 }
 
 type RealTxSignatureResponse struct {
@@ -250,6 +251,7 @@ func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, 
 		PubKey:            walletPubKey,
 		RawTx:             rawTxHex,
 		AuthShare:         authShare,
+		ChainID:           realTxChainID,
 	}
 	jsonData, _ := json.Marshal(signReq)
 

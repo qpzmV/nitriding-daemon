@@ -59,6 +59,7 @@ type SignatureRequest struct {
 	PubKey            string `json:"pub_key"`
 	RawTx             string `json:"raw_tx"`     // hex encoded raw transaction bytes
 	AuthShare         string `json:"auth_share"` // [Optional] encrypted with userPassword + rootPubKey
+	ChainID           int64  `json:"chain_id"`   // EVM chain ID for EIP-155 signing
 }
 
 // Response structures
@@ -624,9 +625,6 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[go] Created wallet for user %s: %s\n", req.UserID, pubKeyHex)
 }
 
-// 假设在 const 处定义了 ChainID (需与测试代码一致)
-const enclaveChainID = 11155111
-
 // signEvmTxHandler 处理 EVM 交易签名
 func signEvmTxHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -705,7 +703,7 @@ func signEvmTxHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. 计算符合 EIP-155 标准的签名哈希
-	signer := types.LatestSignerForChainID(big.NewInt(enclaveChainID))
+	signer := types.LatestSignerForChainID(big.NewInt(req.ChainID))
 	txHash := signer.Hash(&tx)
 
 	log.Printf("[go] Enclave computed Hash: %s\n", txHash.Hex())
