@@ -40,8 +40,8 @@ type SuiCreateWalletResponse struct {
 	UserShare       string `json:"user_share"`
 	DeviceShare     string `json:"device_share"`
 	RecoverShare    string `json:"recover_share"`
-	WalletPublicKey string `json:"wallet_public_key"`
-	SuiPublicKey    string `json:"sui_public_key"`
+	EvmWalletPubKey string `json:"evm_wallet_pub_key"`
+	SuiWalletPubKey string `json:"sui_wallet_pub_key"`
 	SignedNonce     string `json:"signed_nonce"`
 }
 
@@ -224,7 +224,7 @@ func createSuiWallet(verifiedPubKey string) (*SuiCreateWalletResponse, error) {
 		return nil, fmt.Errorf("解析业务响应失败: %v", err)
 	}
 
-	fmt.Printf("✅ 钱包创建成功，公钥: %s\n", walletResp.WalletPublicKey)
+	fmt.Printf("✅ 钱包创建成功，公钥: %s\n", walletResp.EvmWalletPubKey)
 	return &walletResp, nil
 }
 
@@ -302,7 +302,7 @@ func main() {
 	// 4. 派生 SUI 地址
 	// 注意：在 example/service.go 中，SUI 派生路径是 m/44'/784'/0'/0'/0'，
 	// 返回的是该路径下的公钥。
-	suiAddr, err := deriveSuiAddressByPubKey(walletResp.SuiPublicKey)
+	suiAddr, err := deriveSuiAddressByPubKey(walletResp.SuiWalletPubKey)
 	if err != nil {
 		log.Fatalf("❌ 派生 SUI 地址失败: %v", err)
 	}
@@ -349,7 +349,7 @@ func main() {
 	// 7. 请求 Enclave 签名
 	encryptedPassword, _ := encryptSuiPassword(verifiedPubKey, suiUserPIN)
 	signature, err := signSuiTransactionWithEnclave(
-		walletResp.WalletPublicKey,
+		walletResp.EvmWalletPubKey,
 		encryptedPassword,
 		walletResp.DeviceShare,
 		walletResp.AuthShare,

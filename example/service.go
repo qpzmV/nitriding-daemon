@@ -67,10 +67,10 @@ type CreateWalletResponse struct {
 	UserShare       string `json:"user_share"`    // encrypted with userPassword + rootPrivKey
 	DeviceShare     string `json:"device_share"`  // encrypted with userPassword
 	RecoverShare    string `json:"recover_share"` // encrypted with userPassword
-	WalletPublicKey string `json:"wallet_public_key"`
-	SuiPublicKey    string `json:"sui_public_key"` // New SUI Public Key
-	SignedNonce     string `json:"signed_nonce"`   // nonce signed with rootPrivKey
-	Password        string `json:"password"`       // 仅开发测试时用 生产一定要去掉
+	EvmWalletPubKey string `json:"evm_wallet_pub_key"`
+	SuiWalletPubKey string `json:"sui_wallet_pub_key"` // New SUI Public Key
+	SignedNonce     string `json:"signed_nonce"`       // nonce signed with rootPrivKey
+	Password        string `json:"password"`           // 仅开发测试时用 生产一定要去掉
 }
 
 type SignatureResponse struct {
@@ -127,8 +127,8 @@ func getRootPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// testWalletPubKeyHandler 用于测试，固定初始化并返回同一个 WalletPublicKey 和配套分片
-func testWalletPubKeyHandler(w http.ResponseWriter, r *http.Request) {
+// getFixedEvmPubKeyForTestHandler 用于测试，固定初始化并返回同一个 WalletPublicKey 和配套分片
+func getFixedEvmPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 	var req CreateWalletRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -199,8 +199,8 @@ func testWalletPubKeyHandler(w http.ResponseWriter, r *http.Request) {
 		UserShare:       userShare,
 		DeviceShare:     deviceShare,
 		RecoverShare:    recoverShare,
-		WalletPublicKey: pubKeyHex,
-		SuiPublicKey:    suiPubKeyHex,
+		EvmWalletPubKey: pubKeyHex,
+		SuiWalletPubKey: suiPubKeyHex,
 		SignedNonce:     signedNonce,
 		Password:        userPassword,
 	}
@@ -282,8 +282,8 @@ func getFixedSuiPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 		UserShare:       userShare,
 		DeviceShare:     deviceShare,
 		RecoverShare:    recoverShare,
-		WalletPublicKey: pubKeyHex,
-		SuiPublicKey:    suiPubKeyHex,
+		EvmWalletPubKey: pubKeyHex,
+		SuiWalletPubKey: suiPubKeyHex,
 		SignedNonce:     signedNonce,
 		Password:        userPassword,
 	}
@@ -613,8 +613,8 @@ func createWalletHandler(w http.ResponseWriter, r *http.Request) {
 		UserShare:       userShare,
 		DeviceShare:     deviceShare,
 		RecoverShare:    recoverShare,
-		WalletPublicKey: pubKeyHex,
-		SuiPublicKey:    suiPubKeyHex,
+		EvmWalletPubKey: pubKeyHex,
+		SuiWalletPubKey: suiPubKeyHex,
 		SignedNonce:     signedNonce,
 		Password:        userPassword,
 	}
@@ -846,7 +846,7 @@ func main() {
 	http.HandleFunc("/tee_wallet/sign_evm_tx", corsMiddleware(signEvmTxHandler))
 	http.HandleFunc("/tee_wallet/sign_sui_tx", corsMiddleware(signSuiTxHandler))
 	http.HandleFunc("/tee_wallet/tee_pubkey", corsMiddleware(getRootPubKeyHandler))
-	http.HandleFunc("/tee_wallet/test_pubkey", corsMiddleware(testWalletPubKeyHandler))
+	http.HandleFunc("/tee_wallet/get_fixed_evm_pubkey_for_test", corsMiddleware(getFixedEvmPubKeyForTestHandler))
 	http.HandleFunc("/tee_wallet/get_fixed_sui_pubkey_for_test", corsMiddleware(getFixedSuiPubKeyForTestHandler))
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

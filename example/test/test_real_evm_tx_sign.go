@@ -43,7 +43,7 @@ type RealTxCreateWalletResponse struct {
 	UserShare       string `json:"user_share"`
 	DeviceShare     string `json:"device_share"`
 	RecoverShare    string `json:"recover_share"`
-	WalletPublicKey string `json:"wallet_public_key"`
+	EvmWalletPubKey string `json:"evm_wallet_pub_key"`
 	SignedNonce     string `json:"signed_nonce"`
 }
 
@@ -209,7 +209,7 @@ func createRealTxWallet(verifiedPubKey string) (*RealTxCreateWalletResponse, err
 	}
 	jsonData, _ := json.Marshal(requestBody)
 
-	resp, err := http.Post(realTxEnclaveAppURL+"/tee_wallet/test_pubkey", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(realTxEnclaveAppURL+"/tee_wallet/get_fixed_evm_pubkey_for_test", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("业务请求失败: %v", err)
 	}
@@ -225,7 +225,7 @@ func createRealTxWallet(verifiedPubKey string) (*RealTxCreateWalletResponse, err
 		return nil, fmt.Errorf("解析业务响应失败: %v", err)
 	}
 
-	fmt.Printf("\u2705 钱包创建成功，公钥: %s\n", walletResp.WalletPublicKey)
+	fmt.Printf("\u2705 钱包创建成功，公钥: %s\n", walletResp.EvmWalletPubKey)
 	return &walletResp, nil
 }
 
@@ -346,7 +346,7 @@ func main() {
 		log.Fatalf("\u274C 创建钱包失败: %v", err)
 	}
 
-	pkBytes, _ := hex.DecodeString(walletResp.WalletPublicKey)
+	pkBytes, _ := hex.DecodeString(walletResp.EvmWalletPubKey)
 	pk, err := crypto.DecompressPubkey(pkBytes)
 	if err != nil {
 		log.Fatalf("解析钱包公钥失败: %v", err)
@@ -385,7 +385,7 @@ func main() {
 
 	// 5. 请求 Enclave 签名
 	encryptedPassword, _ := encryptRealTxPassword(verifiedPubKey, realTxUserPIN)
-	fullSignature, err := signTransactionWithRecovery(walletResp.WalletPublicKey, encryptedPassword, walletResp.DeviceShare, walletResp.AuthShare, tx)
+	fullSignature, err := signTransactionWithRecovery(walletResp.EvmWalletPubKey, encryptedPassword, walletResp.DeviceShare, walletResp.AuthShare, tx)
 	if err != nil {
 		log.Fatalf("\u274C 签名失败: %v", err)
 	}
