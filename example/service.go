@@ -12,15 +12,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"sync"
 	"time"
 
-	"math/big"
-
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/corvus-ch/shamir"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/tyler-smith/go-bip32"
@@ -59,7 +59,6 @@ type SignatureRequest struct {
 	PubKey            string `json:"pub_key"`
 	RawTx             string `json:"raw_tx"`     // hex encoded raw transaction bytes
 	AuthShare         string `json:"auth_share"` // [Optional] encrypted with userPassword + rootPubKey
-	ChainID           int64  `json:"chain_id"`   // EVM chain ID for EIP-155 signing
 }
 
 // Response structures
@@ -1070,19 +1069,60 @@ func signEvmTxHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tx types.Transaction
-	// 使用 RLP 解码原始交易
-	if err := rlp.DecodeBytes(txBytes, &tx); err != nil {
-		log.Printf("[go] RLP Decode failed: %v\n", err)
-		http.Error(w, fmt.Sprintf("RLP decode failed: %v", err), http.StatusBadRequest)
+	// 5. 检查是否为 EIP-1559 未签名交易 (0x02 前缀)
+	var signer types.Signer
+	var txHash common.Hash
+	var chainID *big.Int
+
+	if len(txBytes) > 0 && txBytes[0] == 0x02 {
+		// EIP-1559 未签名交易: 剥离 0x02 前缀后直接 RLP 解码
+		log.Printf("[go] Detected EIP-1559 unsigned transaction\n")
+		payload := txBytes[1:]
+
+		// 定义未签名 EIP-1559 交易结构
+		type UnsignedDynamicFeeTx struct {
+			ChainID    *big.Int
+			Nonce      uint64
+			GasTipCap  *big.Int
+			GasFeeCap  *big.Int
+			Gas        uint64
+			To         *common.Address `rlp:"nil"`
+			Value      *big.Int
+			Data       []byte
+			AccessList types.AccessList
+		}
+
+		var unsignedTx UnsignedDynamicFeeTx
+		if err := rlp.DecodeBytes(payload, &unsignedTx); err != nil {
+			log.Printf("[go] RLP Decode unsigned EIP-1559 failed: %v\n", err)
+			http.Error(w, fmt.Sprintf("Failed to decode unsigned EIP-1559 transaction: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		chainID = unsignedTx.ChainID
+		signer = types.NewLondonSigner(chainID)
+
+		// 重建交易用于签名哈希计算
+		// 构造 EIP-1559 交易并计算哈希
+		tx := types.NewTx(&types.DynamicFeeTx{
+			ChainID:    chainID,
+			Nonce:      unsignedTx.Nonce,
+			GasTipCap:  unsignedTx.GasTipCap,
+			GasFeeCap:  unsignedTx.GasFeeCap,
+			Gas:        unsignedTx.Gas,
+			To:         unsignedTx.To,
+			Value:      unsignedTx.Value,
+			Data:       unsignedTx.Data,
+			AccessList: unsignedTx.AccessList,
+		})
+		txHash = signer.Hash(tx)
+		log.Printf("[go] Computed EIP-1559 unsigned transaction hash: %s\n", txHash.Hex())
+	} else {
+		// 非 0x02 前缀的交易被认为是已签名的或不支持的格式
+		log.Printf("[go] Received transaction with type byte: 0x%02x\n", txBytes[0])
+		http.Error(w, "Only unsigned EIP-1559 transactions (0x02 prefix) are supported. Received transaction appears to be already signed or in an unsupported format.", http.StatusBadRequest)
 		return
 	}
-
-	// 5. 计算符合 EIP-155 标准的签名哈希
-	signer := types.LatestSignerForChainID(big.NewInt(req.ChainID))
-	txHash := signer.Hash(&tx)
-
-	log.Printf("[go] Enclave computed Hash: %s\n", txHash.Hex())
 
 	// 6. 使用私钥签名该哈希
 	sig := ecdsa.Sign(privKey, txHash.Bytes())

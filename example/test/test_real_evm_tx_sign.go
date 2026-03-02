@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -26,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/fxamacker/cbor/v2"
 )
 
@@ -63,7 +65,6 @@ type RealTxSignatureRequest struct {
 	PubKey            string `json:"pub_key"`
 	RawTx             string `json:"raw_tx"`
 	AuthShare         string `json:"auth_share"`
-	ChainID           int64  `json:"chain_id"`
 }
 
 type RealTxSignatureResponse struct {
@@ -241,20 +242,74 @@ func createRealTxWallet(verifiedPubKey string) (*RealTxCreateWalletResponse, err
 	return &walletResp, nil
 }
 
+// encodeUnsignedEIP1559Tx encodes an unsigned EIP-1559 transaction to hex string
+// The format should be: 0x02 + RLP([chainId, nonce, gasTipCap, gasFeeCap, gas, to, value, data, accessList])
+func encodeUnsignedEIP1559Tx(tx *types.Transaction) (string, error) {
+	txType := tx.Type()
+	if txType != types.DynamicFeeTxType {
+		return "", fmt.Errorf("expected EIP-1559 transaction (type %d), got type %d", types.DynamicFeeTxType, txType)
+	}
+
+	// Use reflection to access the private inner field
+	// For EIP-1559, tx.inner should be *types.DynamicFeeTx
+	txVal := reflect.ValueOf(tx).Elem()
+	innerVal := txVal.FieldByName("inner")
+
+	if !innerVal.IsValid() {
+		return "", fmt.Errorf("cannot access transaction inner field")
+	}
+
+	innerTx := innerVal.Interface().(*types.DynamicFeeTx)
+
+	// Manually construct the RLP encoding for unsigned transaction
+	// EIP-1559 unsigned: 0x02 + RLP([chainId, nonce, gasTipCap, gasFeeCap, gas, to, value, data, accessList])
+	// accessList is expected to be types.AccessList (can be empty)
+	var accessList types.AccessList
+	if innerTx.AccessList != nil {
+		accessList = innerTx.AccessList
+	}
+
+	unsignedFields := []interface{}{
+		innerTx.ChainID,
+		innerTx.Nonce,
+		innerTx.GasTipCap,
+		innerTx.GasFeeCap,
+		innerTx.Gas,
+		innerTx.To,
+		innerTx.Value,
+		innerTx.Data,
+		accessList,
+	}
+
+	encoded, err := rlp.EncodeToBytes(unsignedFields)
+	if err != nil {
+		return "", fmt.Errorf("failed to RLP encode transaction fields: %v", err)
+	}
+
+	// Prepend transaction type byte (0x02 for EIP-1559)
+	txBytes := append([]byte{types.DynamicFeeTxType}, encoded...)
+	return hex.EncodeToString(txBytes), nil
+}
+
 // signTransactionWithRecovery 签名交易并获取完整的以太坊签名 (含 Recovery ID)
 func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, deviceShare string, authShare string, tx *types.Transaction) ([]byte, error) {
 	fmt.Printf("\n[Step 3] 正在请求 Enclave 签名交易...\n")
 
-	// 计算交易哈希
-	signer := types.LatestSignerForChainID(big.NewInt(realTxChainID))
-	h := signer.Hash(tx)
-
-	// 准备原始交易数据的十六进制
-	rawTxBytes, err := tx.MarshalBinary()
-	if err != nil {
-		return nil, err
+	// 对于 EIP-1559 交易，获取未签名交易的原始字节
+	txType := tx.Type()
+	if txType != types.DynamicFeeTxType {
+		return nil, fmt.Errorf("expected EIP-1559 transaction (type %d), got type %d", types.DynamicFeeTxType, txType)
 	}
-	rawTxHex := hex.EncodeToString(rawTxBytes)
+
+	// 计算交易哈希用于恢复 Recovery ID
+	signer := types.NewLondonSigner(big.NewInt(realTxChainID))
+	txHash := signer.Hash(tx)
+
+	// 获取未签名的 EIP-1559 交易字节
+	rawTxHex, err := encodeUnsignedEIP1559Tx(tx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode unsigned transaction: %v", err)
+	}
 
 	signReq := RealTxSignatureRequest{
 		EncryptedPassword: encryptedPassword,
@@ -262,7 +317,6 @@ func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, 
 		PubKey:            walletPubKey,
 		RawTx:             rawTxHex,
 		AuthShare:         authShare,
-		ChainID:           realTxChainID,
 	}
 	jsonData, _ := json.Marshal(signReq)
 
@@ -313,7 +367,7 @@ func signTransactionWithRecovery(walletPubKey string, encryptedPassword string, 
 
 	for v := 0; v <= 1; v++ {
 		fullSig[64] = byte(v)
-		recoveredPubKey, err := crypto.Ecrecover(h.Bytes(), fullSig)
+		recoveredPubKey, err := crypto.Ecrecover(txHash.Bytes(), fullSig)
 		if err != nil {
 			continue
 		}
@@ -378,23 +432,37 @@ func main() {
 		fmt.Printf("输入无效。请输入 'continue' 以继续：")
 	}
 
-	// 4. 构造交易
+	// 4. 构造 EIP-1559 交易
 	nonce, err := client.PendingNonceAt(context.Background(), walletAddr)
 	if err != nil {
 		log.Fatalf("获取 Nonce 失败: %v", err)
 	}
 
-	gasPrice, err := client.SuggestGasPrice(context.Background())
+	// 获取 BaseFeePerGas 和 GasTipCap 用于 EIP-1559
+	header, err := client.HeaderByNumber(context.Background(), nil)
 	if err != nil {
-		log.Fatalf("获取 GasPrice 失败: %v", err)
+		log.Fatalf("获取区块头失败: %v", err)
 	}
+	baseFee := header.BaseFee
+
+	gasTipCap := big.NewInt(1000000) // 1 Gwei
+	gasFeeCap := new(big.Int).Add(baseFee, gasTipCap)
 
 	toAddress := common.HexToAddress("0x71C7656EC7ab88b098defB751B7401B5f6d8976F")
 	value := big.NewInt(1000000000000000) // 0.001 ETH
 	gasLimit := uint64(21000)
 
-	// 使用 Legacy 交易
-	tx := types.NewTransaction(nonce, toAddress, value, gasLimit, gasPrice, nil)
+	// 构造 EIP-1559 动态费用交易
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   big.NewInt(realTxChainID),
+		Nonce:     nonce,
+		GasTipCap: gasTipCap,
+		GasFeeCap: gasFeeCap,
+		Gas:       gasLimit,
+		To:        &toAddress,
+		Value:     value,
+		Data:      nil,
+	})
 
 	// 5. 请求 Enclave 签名
 	encryptedPassword, _ := encryptRealTxPassword(verifiedPubKey, realTxUserPIN)
@@ -404,7 +472,7 @@ func main() {
 	}
 
 	// 6. 装配已签名交易
-	signer := types.LatestSignerForChainID(big.NewInt(realTxChainID))
+	signer := types.NewLondonSigner(big.NewInt(realTxChainID))
 	signedTx, err := tx.WithSignature(signer, fullSignature)
 	if err != nil {
 		log.Fatalf("装配签名交易失败: %v", err)
