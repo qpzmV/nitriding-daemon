@@ -38,13 +38,23 @@ const (
 	realTxChainID       = 11155111                                      // Sepolia Chain ID
 )
 
-type RealTxCreateWalletResponse struct {
-	AuthShare       string `json:"auth_share"`
-	UserShare       string `json:"user_share"`
-	DeviceShare     string `json:"device_share"`
-	RecoverShare    string `json:"recover_share"`
+type RealTxKeyShares struct {
+	AuthShare    string `json:"auth_share"`
+	UserShare    string `json:"user_share"`
+	DeviceShare  string `json:"device_share"`
+	RecoverShare string `json:"recover_share"`
+}
+
+type RealTxWalletPubKeys struct {
 	EvmWalletPubKey string `json:"evm_wallet_pub_key"`
-	SignedNonce     string `json:"signed_nonce"`
+	SuiWalletPubKey string `json:"sui_wallet_pub_key"`
+}
+
+type RealTxCreateWalletResponse struct {
+	KeyShares     RealTxKeyShares     `json:"key_shares"`
+	WalletPubKeys RealTxWalletPubKeys `json:"wallet_pub_keys"`
+	SignedNonce   string              `json:"signed_nonce"`
+	Password      string              `json:"password"`
 }
 
 type RealTxSignatureRequest struct {
@@ -207,6 +217,7 @@ func createRealTxWallet(verifiedPubKey string) (*RealTxCreateWalletResponse, err
 		"login_token":        "token_real_tx_test",
 		"nonce":              realTxNonce,
 		"encrypted_password": encryptedPass,
+		"tee_pk":             verifiedPubKey,
 	}
 	jsonData, _ := json.Marshal(requestBody)
 
@@ -226,7 +237,7 @@ func createRealTxWallet(verifiedPubKey string) (*RealTxCreateWalletResponse, err
 		return nil, fmt.Errorf("解析业务响应失败: %v", err)
 	}
 
-	fmt.Printf("\u2705 钱包创建成功，公钥: %s\n", walletResp.EvmWalletPubKey)
+	fmt.Printf("✅ 钱包创建成功，公钥: %s\n", walletResp.WalletPubKeys.EvmWalletPubKey)
 	return &walletResp, nil
 }
 
@@ -348,7 +359,7 @@ func main() {
 		log.Fatalf("\u274C 创建钱包失败: %v", err)
 	}
 
-	pkBytes, _ := hex.DecodeString(walletResp.EvmWalletPubKey)
+	pkBytes, _ := hex.DecodeString(walletResp.WalletPubKeys.EvmWalletPubKey)
 	pk, err := crypto.DecompressPubkey(pkBytes)
 	if err != nil {
 		log.Fatalf("解析钱包公钥失败: %v", err)
@@ -387,7 +398,7 @@ func main() {
 
 	// 5. 请求 Enclave 签名
 	encryptedPassword, _ := encryptRealTxPassword(verifiedPubKey, realTxUserPIN)
-	fullSignature, err := signTransactionWithRecovery(walletResp.EvmWalletPubKey, encryptedPassword, walletResp.DeviceShare, walletResp.AuthShare, tx)
+	fullSignature, err := signTransactionWithRecovery(walletResp.WalletPubKeys.EvmWalletPubKey, encryptedPassword, walletResp.KeyShares.DeviceShare, walletResp.KeyShares.AuthShare, tx)
 	if err != nil {
 		log.Fatalf("\u274C 签名失败: %v", err)
 	}
