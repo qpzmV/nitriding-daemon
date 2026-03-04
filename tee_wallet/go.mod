@@ -9,6 +9,7 @@ require (
 	github.com/hf/nsm v0.0.0-20220930140112-cd181bd646b9
 	github.com/mdlayher/vsock v1.2.1
 	github.com/tyler-smith/go-bip32 v1.0.0
+	golang.org/x/crypto v0.48.0
 )
 
 require (
@@ -25,7 +26,6 @@ require (
 	github.com/mdlayher/socket v0.4.1 // indirect
 	github.com/supranational/blst v0.3.16-0.20250831170142-f48500c1fdbe // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
