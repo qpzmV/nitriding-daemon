@@ -56,7 +56,7 @@ type SuiCreateWalletResponse struct {
 type SuiSignatureRequest struct {
 	EncryptedPassword string `json:"encrypted_password"`
 	DeviceShare       string `json:"device_share"`
-	PubKey            string `json:"pub_key"`
+	PubKey            string `json:"wallet_pub_key"`
 	RawTx             string `json:"raw_tx"`
 	AuthShare         string `json:"auth_share"`
 }

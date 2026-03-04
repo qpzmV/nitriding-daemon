@@ -64,7 +64,7 @@ type RealTxCreateWalletResponse struct {
 type RealTxSignatureRequest struct {
 	EncryptedPassword string `json:"encrypted_password"`
 	DeviceShare       string `json:"device_share"`
-	PubKey            string `json:"pub_key"`
+	PubKey            string `json:"wallet_pub_key"`
 	RawTx             string `json:"raw_tx"` // Hex string of 0x02 || RLP(...)
 	AuthShare         string `json:"auth_share"`
 }

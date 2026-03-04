@@ -56,7 +56,7 @@ type CreateWalletRequest struct {
 type SignatureRequest struct {
 	EncryptedPassword string `json:"encrypted_password"` // encrypted with rootPubKey
 	DeviceShare       string `json:"device_share"`       // encrypted with userPassword
-	PubKey            string `json:"pub_key"`
+	WalletPubKey      string `json:"wallet_pub_key"`
 	RawTx             string `json:"raw_tx"`     // hex encoded raw transaction bytes
 	AuthShare         string `json:"auth_share"` // [Optional] encrypted with userPassword + rootPubKey
 }
