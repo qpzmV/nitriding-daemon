@@ -852,7 +852,7 @@ func signEvmTxHandler(w http.ResponseWriter, r *http.Request) {
 	userPart, _ := gcm.Open(nil, deviceShareEncrypted[:nonceSize], deviceShareEncrypted[nonceSize:], nil)
 
 	storeMutex.RLock()
-	enclavePart, ok := shardsStore[req.PubKey]
+	enclavePart, ok := shardsStore[req.WalletPubKey]
 	storeMutex.RUnlock()
 
 	// 2.2 如果内存中没有，尝试从请求参数里的 AuthShare 解密
@@ -861,7 +861,7 @@ func signEvmTxHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Wallet shard not found in memory and no AuthShare provided", http.StatusNotFound)
 			return
 		}
-		log.Printf("[go] Shard1 missing from memory, attempting to decrypt from AuthShare for wallet: %s\n", req.PubKey)
+		log.Printf("[go] Shard1 missing from memory, attempting to decrypt from AuthShare for wallet: %s\n", req.WalletPubKey)
 		enclavePart, err = decryptWithPasswordAndRoot(req.AuthShare, userPassword)
 		if err != nil {
 			log.Printf("[go] Failed to decrypt AuthShare: %v\n", err)
@@ -989,7 +989,7 @@ func signSuiTxHandler(w http.ResponseWriter, r *http.Request) {
 	userPart, _ := gcm.Open(nil, deviceShareEncrypted[:nonceSize], deviceShareEncrypted[nonceSize:], nil)
 
 	storeMutex.RLock()
-	enclavePart, ok := shardsStore[req.PubKey]
+	enclavePart, ok := shardsStore[req.WalletPubKey]
 	storeMutex.RUnlock()
 
 	if !ok {
