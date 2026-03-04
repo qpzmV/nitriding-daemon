@@ -65,7 +65,7 @@ type SignatureRequest struct {
 type KeyShares struct {
 	AuthShare    string `json:"auth_share"`    // encrypted with userPassword + rootPrivKey
 	DeviceShare  string `json:"device_share"`  // encrypted with userPassword
-	RecoverShare string `json:"recover_share"` // encrypted with userPassword
+	RecoverShare string `json:"recover_share"` // encrypted with userPassword + rootPrivKey
 }
 
 type WalletPubKeys struct {
@@ -258,7 +258,7 @@ func getFixedEvmPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to encrypt device share: %v", err), http.StatusInternalServerError)
 		return
 	}
-	recoverShare, err := encryptWithPassword(shard3, userPassword)
+	recoverShare, err := encryptWithPasswordAndRoot(shard3, userPassword)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encrypt recover share: %v", err), http.StatusInternalServerError)
 		return
@@ -351,7 +351,7 @@ func getFixedSuiPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 	// 5. 加解密并返回
 	authShare, _ := encryptWithPasswordAndRoot(shard1, userPassword)
 	deviceShare, _ := encryptWithPassword(shard2, userPassword)
-	recoverShare, _ := encryptWithPassword(shard3, userPassword)
+	recoverShare, _ := encryptWithPasswordAndRoot(shard3, userPassword)
 
 	// 6. 签名 nonce
 	signedNonce, _ := signNonce(req.Nonce)
@@ -640,8 +640,8 @@ func createEvmKeySharesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// recover_share (shard3): encrypted with password only
-	recoverShare, err := encryptWithPassword(shard3, userPassword)
+	// recover_share (shard3): encrypted with password + rootPrivKey
+	recoverShare, err := encryptWithPasswordAndRoot(shard3, userPassword)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encrypt recover share: %v", err), http.StatusInternalServerError)
 		return
@@ -763,8 +763,8 @@ func createSuiKeySharesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// recover_share (shard3): encrypted with password only
-	recoverShare, err := encryptWithPassword(shard3, userPassword)
+	// recover_share (shard3): encrypted with password + rootPrivKey
+	recoverShare, err := encryptWithPasswordAndRoot(shard3, userPassword)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encrypt recover share: %v", err), http.StatusInternalServerError)
 		return
