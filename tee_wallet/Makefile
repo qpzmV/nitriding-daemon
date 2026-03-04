@@ -40,6 +40,8 @@ PORT ?= 8088
 
 .PHONY: run
 run: $(image_eif)
+	# Terminate already-running enclave.
+	nitro-cli terminate-enclave --all
 	# Start our proxy and the enclave.
 	./run-enclave.sh $(image_eif) $(CID) $(PORT)
 

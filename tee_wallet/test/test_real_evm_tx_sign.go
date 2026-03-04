@@ -32,7 +32,7 @@ import (
 
 const (
 	realTxEnclaveAppURL = "http://localhost:8088"
-	realTxNitridingURL  = "https://localhost:10443/enclave/attestation"
+	realTxNitridingURL  = "http://localhost:8088/tee_wallet/attestation"
 	realTxNonce         = "1234567890abcdef1234567890abcdef12345678"
 	realTxUserPIN       = "my-secure-pin-123456"
 	realTxRpcURL        = "https://ethereum-sepolia-rpc.publicnode.com"

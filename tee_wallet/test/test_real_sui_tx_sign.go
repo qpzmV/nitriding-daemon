@@ -29,7 +29,7 @@ import (
 
 const (
 	suiEnclaveAppURL = "http://localhost:8088"
-	suiNitridingURL  = "https://localhost:10443/enclave/attestation"
+	suiNitridingURL  = "http://localhost:8088/tee_wallet/attestation"
 	suiNonce         = "abcdef1234567890abcdef1234567890abcdef12" // 40-digit hex string
 	suiUserPIN       = "my-secure-pin-123456"
 	suiDevnetRpc     = "https://fullnode.devnet.sui.io"
