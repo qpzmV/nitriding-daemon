@@ -64,7 +64,6 @@ type SignatureRequest struct {
 // Response structures
 type KeyShares struct {
 	AuthShare    string `json:"auth_share"`    // encrypted with userPassword + rootPrivKey
-	UserShare    string `json:"user_share"`    // encrypted with userPassword + rootPrivKey
 	DeviceShare  string `json:"device_share"`  // encrypted with userPassword
 	RecoverShare string `json:"recover_share"` // encrypted with userPassword
 }
@@ -254,11 +253,6 @@ func getFixedEvmPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to encrypt auth share: %v", err), http.StatusInternalServerError)
 		return
 	}
-	userShare, err := encryptWithPasswordAndRoot(shard2, userPassword)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encrypt user share: %v", err), http.StatusInternalServerError)
-		return
-	}
 	deviceShare, err := encryptWithPassword(shard2, userPassword)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encrypt device share: %v", err), http.StatusInternalServerError)
@@ -280,7 +274,6 @@ func getFixedEvmPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 	resp := CreateWalletResponse{
 		KeyShares: KeyShares{
 			AuthShare:    authShare,
-			UserShare:    userShare,
 			DeviceShare:  deviceShare,
 			RecoverShare: recoverShare,
 		},
@@ -357,7 +350,6 @@ func getFixedSuiPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 5. 加解密并返回
 	authShare, _ := encryptWithPasswordAndRoot(shard1, userPassword)
-	userShare, _ := encryptWithPasswordAndRoot(shard2, userPassword)
 	deviceShare, _ := encryptWithPassword(shard2, userPassword)
 	recoverShare, _ := encryptWithPassword(shard3, userPassword)
 
@@ -367,7 +359,6 @@ func getFixedSuiPubKeyForTestHandler(w http.ResponseWriter, r *http.Request) {
 	resp := CreateWalletResponse{
 		KeyShares: KeyShares{
 			AuthShare:    authShare,
-			UserShare:    userShare,
 			DeviceShare:  deviceShare,
 			RecoverShare: recoverShare,
 		},
@@ -642,13 +633,6 @@ func createEvmKeySharesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// user_share (shard2): encrypted with password + rootPrivKey
-	userShare, err := encryptWithPasswordAndRoot(shard2, userPassword)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encrypt user share: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	// device_share (shard2): encrypted with password only
 	deviceShare, err := encryptWithPassword(shard2, userPassword)
 	if err != nil {
@@ -693,7 +677,6 @@ func createEvmKeySharesHandler(w http.ResponseWriter, r *http.Request) {
 	resp := CreateKeySharesResponse{
 		KeyShares: KeyShares{
 			AuthShare:    authShare,
-			UserShare:    userShare,
 			DeviceShare:  deviceShare,
 			RecoverShare: recoverShare,
 		},
@@ -773,13 +756,6 @@ func createSuiKeySharesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// user_share (shard2): encrypted with password + rootPrivKey
-	userShare, err := encryptWithPasswordAndRoot(shard2, userPassword)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to encrypt user share: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	// device_share (shard2): encrypted with password only
 	deviceShare, err := encryptWithPassword(shard2, userPassword)
 	if err != nil {
@@ -834,7 +810,6 @@ func createSuiKeySharesHandler(w http.ResponseWriter, r *http.Request) {
 	resp := CreateKeySharesResponse{
 		KeyShares: KeyShares{
 			AuthShare:    authShare,
-			UserShare:    userShare,
 			DeviceShare:  deviceShare,
 			RecoverShare: recoverShare,
 		},

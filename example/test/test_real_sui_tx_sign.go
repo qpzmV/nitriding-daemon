@@ -37,7 +37,6 @@ const (
 
 type SuiKeyShares struct {
 	AuthShare    string `json:"auth_share"`
-	UserShare    string `json:"user_share"`
 	DeviceShare  string `json:"device_share"`
 	RecoverShare string `json:"recover_share"`
 }
